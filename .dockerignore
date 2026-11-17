@@ -1,0 +1,8 @@
+node_modules
+_site
+data
+_respaldo_matrices
+.git
+.github
+**/~$*
+*.md

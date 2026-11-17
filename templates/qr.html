@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_iconos.html" import icono %}
+{% set raiz = "../" %}
+{% block title %}Códigos QR · Mantenimiento{% endblock %}
+{% block cabecera %}
+<a class="btn btn-ghost btn-icon" href="../" aria-label="Inicio" title="Inicio">{{ icono("arrow-left") }}</a>
+<div class="top-titulo"><h1>Códigos QR de estaciones</h1><p>{{ machines|length }} estaciones</p></div>
+{% endblock %}
+{% block head %}
+<style>
+  .qr-intro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+  .qr-intro p { max-width: var(--measure); color: var(--c-muted); }
+  .qrs { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .qr { padding: var(--sp-5) var(--sp-4); text-align: center; border: 2px solid var(--c-ink); break-inside: avoid; }
+  .qr img { width: 100%; max-width: 220px; }
+  .qr h2 { margin: var(--sp-2) 0 var(--sp-1); font-size: var(--fs-xl); }
+  .aviso { display: flex; gap: var(--sp-3); padding: var(--sp-4); border-left: 4px solid var(--c-amber); background: var(--c-amber-tint); color: var(--c-amber-ink); }
+  /* margin 0: el navegador ya no imprime fecha, título ni URL en los márgenes de la hoja */
+  @page { margin: 0; }
+  @media print {
+    .noprint, .top, .pie { display: none; }
+    body { background: #fff; }
+    .qr { box-shadow: none; }
+    main { padding: 12mm; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+{% if base_url %}
+<div class="qr-intro noprint">
+  <button class="btn btn-primary" type="button" onclick="print()">{{ icono("printer") }} Imprimir</button>
+</div>
+<div class="qrs">
+  {% for m in machines %}
+  <div class="panel qr">
+    <img src="{{ m.slug }}.svg" alt="QR {{ m.info.equipo }}">
+    <h2 class="nombre-estacion">{{ m.info.equipo }}</h2>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="aviso" role="alert">{{ icono("alert") }}<span>Los códigos QR no se generaron: falta la variable <b>BASE_URL</b> al construir el sitio.</span></p>
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,7 @@
+_site/
+static/
+__pycache__/
+~$*.xlsx
+node_modules/
+data/
+_respaldo_matrices/

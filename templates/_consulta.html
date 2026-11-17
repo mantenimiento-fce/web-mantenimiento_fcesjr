@@ -1,0 +1,22 @@
+{% from "_iconos.html" import icono %}
+{# modo: "estacion" (sobre esa estación), "general" (estaciones y KPIs). Las respuestas las da /api/chat (server.js). #}
+{% set modo = modo or "estacion" %}
+<section class="panel consulta" aria-labelledby="consulta-t" data-raiz="{{ raiz }}" data-estacion="{{ estacion }}" data-modo="{{ modo }}">
+  <h2 class="consulta-label" id="consulta-t">{% if nombre %}Asistente · {{ nombre }}{% else %}Asistente de mantenimiento{% endif %}</h2>
+  <div class="chat-log" id="consulta-res" aria-live="polite">
+    <div class="chat-msg chat-bot">
+      <p>Pregunte lo que necesite sobre {% if nombre %}esta estación{% else %}las estaciones o los indicadores{% endif %}. Por ejemplo:</p>
+      <div class="chat-ejemplos">
+        {% if modo == "estacion" %}<button type="button">¿Cada cuándo se lubrican los carros?</button><button type="button">El radio no enciende, ¿qué reviso?</button><button type="button">¿Qué herramientas necesito para el preventivo?</button>
+        {% else %}<button type="button">MTTR de octubre en Honda 25SA</button><button type="button">Gráfica del BDR por mes de este año</button><button type="button">Máquinas con más fallas el mes pasado</button>{% endif %}
+      </div>
+    </div>
+  </div>
+  <form class="chat-form" id="consulta-form">
+    <label class="sr-only" for="consulta-q">Pregunta</label>
+    <textarea class="input" id="consulta-q" rows="1" autocomplete="off" maxlength="2000" placeholder="Escriba su pregunta…"></textarea>
+    <button class="btn btn-primary btn-icon" type="submit" aria-label="Enviar" title="Enviar">{{ icono("send") }}</button>
+  </form>
+</section>
+{% if modo != "estacion" %}<script src="{{ raiz }}andon.js" defer></script>{% endif %}
+<script src="{{ raiz }}asistente.js" defer></script>

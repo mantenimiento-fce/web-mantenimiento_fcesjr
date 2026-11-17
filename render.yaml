@@ -1,0 +1,21 @@
+# Blueprint de Render: New + > Blueprint > este repositorio. Las claves (sync: false) se capturan en el panel de Render.
+services:
+  - type: web
+    name: mantenimiento
+    runtime: docker
+    plan: free            # con plan de pago (starter) se puede agregar el disco de abajo
+    healthCheckPath: /salud
+    autoDeploy: true      # cada push a main regenera el sitio desde los Excel
+    envVars:
+      - key: ANTHROPIC_API_KEY   # chatbot de IA (Claude Haiku); sin ella responde el buscador local
+        sync: false
+      - key: ANDON_CLAVE         # clave que pide el botón Publicar del dashboard
+        sync: false
+      - key: GITHUB_TOKEN        # opcional: guarda cada publicación en el repo (token fine-grained, Contents RW, solo este repo)
+        sync: false
+      - key: GITHUB_REPO         # opcional: usuario/repositorio
+        sync: false
+    # disk:                    # opcional (plan de pago): lo publicado sobrevive a reinicios sin depender de GitHub
+    #   name: datos
+    #   mountPath: /app/data
+    #   sizeGB: 1
