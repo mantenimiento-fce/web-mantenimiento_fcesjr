@@ -138,4 +138,18 @@ finally:
     srv.kill()
     shutil.rmtree(datos, ignore_errors=True)
 print("OK servidor")
+
+# herramientas del chatbot (las mismas que usa Groq/Claude), sin llamar a ninguna API
+js = """const {herramientas}=require('./server.js');const assert=require('assert');const g=[];
+const t=Object.fromEntries(herramientas(g,true).map(x=>[x.name,x]));
+(async()=>{
+assert(JSON.parse(await t.buscar_hpm.run({pregunta:'cada cuando se lubrican los carros',estacion:'display-tester-station'})).pasos.some(p=>p.paso==='27'));
+assert(/Switch principal apagado/.test(await t.troubleshooting.run({estacion:'flashing-station',efecto:'no enciende'})));
+assert.strictEqual(JSON.parse(await t.kpi_resumen.run({anio:'2026',mes_desde:'3',mes_hasta:'5'})).periodo,'Marzo–Mayo 2026');
+await t.graficar_kpi.run({kpi:'bdr',por:'linea',anio:2026,mes_desde:10,mes_hasta:10});assert(g.length===1&&g[0].horizontal);
+assert.strictEqual(herramientas([],false).length,4);console.log('ok');})().catch(e=>{console.error(e);process.exit(1)});"""
+h = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", cwd=BASE,
+                   env={**os.environ, "DATA_DIR": tempfile.mkdtemp()})
+assert h.stdout.strip() == "ok", h.stderr
+print("OK herramientas del chatbot")
 print("Todo OK")

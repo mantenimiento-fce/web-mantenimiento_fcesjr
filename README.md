@@ -11,16 +11,24 @@ Sitio web (Render, Docker) generado con `build.py` y servido por `server.js`:
 
 ## Asistente (chatbot)
 
-Cada página tiene un chat (`templates/_consulta.html` + `templates/asistente.js`) que pregunta a `/api/chat` de `server.js`:
+Cada página tiene un chat (`templates/_consulta.html` + `templates/asistente.js`) que pregunta a `/api/chat` de `server.js`.
+El modelo se elige por la variable que esté definida (en este orden):
 
-- Modelo **Claude Haiku 5.5** (`claude-haiku-5-5`, ligero y barato) con las hojas HPM y el troubleshooting de todas las
-  estaciones en el prompt (en caché), así responde cualquier pregunta sobre las máquinas.
-- Indicadores con herramientas que calculan con `andon.js` (nunca de memoria): resumen de un periodo o rango de meses,
-  rankings (líneas, máquinas, fallas, turnos) y **gráficas** (`graficar_kpi`) que el chat dibuja con Chart.js.
-  Ej.: «gráfica del MTTR de marzo a junio en Honda 25SA», «BDR por línea en octubre», «máquinas con más fallas».
-- Sin `ANTHROPIC_API_KEY` (o si la API falla) responde el buscador local de antes (`crear` en `asistente.js`).
-  Para que ese buscador entienda palabras nuevas, agregarlas a `SINONIMOS`; los casos están en `casos_consulta.json`.
-- Tope de 40 preguntas por IP cada 10 min para que nadie gaste la API sin límite.
+1. **`GROQ_API_KEY` → Llama en Groq (gratis)**. Usa `llama-3.3-70b-versatile` (o `GROQ_MODELO`) y, si llega a su límite
+   gratis o falla, `llama-3.1-8b-instant`. Como el plan gratis limita tokens por minuto y por día, el HPM y el
+   troubleshooting no van en el prompt: el modelo los consulta con las herramientas `buscar_hpm` y `troubleshooting`.
+2. **`ANTHROPIC_API_KEY` → Claude Haiku 5.5 (de pago, centavos)**, con todas las hojas en el prompt (en caché).
+3. **Ninguna (o fallan) → el buscador local** de siempre (`crear` en `asistente.js`); para que entienda palabras
+   nuevas, agregarlas a `SINONIMOS`; los casos están en `casos_consulta.json`.
+
+Los indicadores siempre se calculan con herramientas sobre `andon.js` (nunca de memoria): resumen de un periodo o rango
+de meses, rankings (líneas, máquinas, fallas, turnos) y **gráficas** (`graficar_kpi`) que el chat dibuja con Chart.js.
+Ej.: «gráfica del MTTR de marzo a junio en Honda 25SA», «BDR por línea en octubre», «máquinas con más fallas».
+Tope de 40 preguntas por IP cada 10 min.
+
+**Clave de Groq**: en https://console.groq.com crear cuenta → *API Keys* → *Create API Key*; copiarla en Render como
+`GROQ_API_KEY`. Los límites del plan gratis están en *Settings → Limits* de la consola. Revisar los términos de Groq
+antes de enviar datos de planta.
 
 ## Matrices de troubleshooting
 
@@ -66,7 +74,7 @@ Node (`server.js`, con gzip y caché larga para las fotos). No hace falta Docker
 
 1. Subir esta carpeta a GitHub (rama `main`).
 2. En Render: **New + → Blueprint** y elegir el repositorio (usa `render.yaml`). O **New + → Web Service → Docker**.
-3. Capturar las variables: `ANTHROPIC_API_KEY` (console.anthropic.com), `ANDON_CLAVE`, y opcionalmente
+3. Capturar las variables: `GROQ_API_KEY` (gratis, console.groq.com) u opcionalmente `ANTHROPIC_API_KEY`, `ANDON_CLAVE`, y opcionalmente
    `GITHUB_TOKEN` (fine-grained, solo este repo, *Contents: Read and write*) + `GITHUB_REPO` (`usuario/repo`).
 4. Cada push a `main` (por ejemplo, al actualizar un Excel) reconstruye y publica. Abrir `https://<servicio>.onrender.com/qr/`
    e imprimir los QR (la URL sale de `RENDER_EXTERNAL_URL`; para un dominio propio, definir `BASE_URL`).
@@ -85,7 +93,7 @@ image*; pero entonces hay que reconstruir y subir la imagen a mano en cada cambi
 py -m pip install -r requirements.txt
 npm install
 py build.py
-set ANTHROPIC_API_KEY=...   (opcional)
+set GROQ_API_KEY=...   (opcional)
 node server.js
 ```
 Abrir http://localhost:10000. `py test_build.py` verifica el parseo de los 4 HPM, troubleshooting, KPIs, el buscador y el

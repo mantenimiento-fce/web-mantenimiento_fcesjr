@@ -1,6 +1,7 @@
 // Servidor de Mantenimiento para Render: sirve el sitio que genera build.py (_site), el chatbot (/api/chat) y la
 // publicación de reportes ANDON (/api/andon). Sin framework: el sitio es estático y las dos rutas caben aquí.
-//   ANTHROPIC_API_KEY  chatbot con Claude Haiku; sin ella responde el buscador local (asistente.js / andon.js)
+//   GROQ_API_KEY       chatbot gratis con Llama en Groq (GROQ_MODELO para cambiar el modelo)
+//   ANTHROPIC_API_KEY  chatbot con Claude Haiku (si no hay Groq); sin ninguna responde el buscador local (asistente.js / andon.js)
 //   DATA_DIR           carpeta donde se guarda andon.json publicado (en Render: disco persistente montado aquí)
 //   ANDON_CLAVE        si existe, publicar pide esta clave
 //   GITHUB_TOKEN + GITHUB_REPO  además guarda andon.json en el repositorio (sobrevive a redeploys sin disco)
@@ -150,8 +151,9 @@ const PERIODO = {
   maquina: { type: 'string', description: 'Máquina exacta de ANDON (usar buscar_maquinas)' },
 };
 const filtro = i => {
-  const desde = i.mes_desde || null, hasta = i.mes_hasta || null;
-  return { anio: i.anio, mes: desde && desde === hasta ? desde : null, desde, hasta, linea: i.linea || null, maq: i.maquina || null };
+  const num = v => v == null || v === '' ? null : +v || null;
+  const desde = num(i.mes_desde), hasta = num(i.mes_hasta);
+  return { anio: num(i.anio) || +D.M.ultima.slice(0, 4), mes: desde && desde === hasta ? desde : null, desde, hasta, linea: i.linea || null, maq: i.maquina || null };
 };
 const describir = f => `${f.mes ? ANDON.MESES[f.mes - 1] : f.desde || f.hasta ? `${ANDON.MESES[(f.desde || 1) - 1]}–${ANDON.MESES[(f.hasta || 12) - 1]}` : 'Año'} ${f.anio}` +
   (f.linea ? ` · ${f.linea}` : '') + (f.maq ? ` · ${f.maq}` : '');
@@ -161,15 +163,18 @@ const KPI = { bdr: ['bdr', 'BDR', '%'], mttr: ['mttr', 'MTTR', 'min'], mtbf: ['m
               downtime: ['paro', 'Downtime', 'min'], espera: ['loc', 'Espera del técnico', 'min'] };
 const POR = { linea: 'lin', maquina: 'maq', falla: 'falla', turno: 'turno' };
 
-function herramientas(graficas) {
+// conHpm: para modelos con poco contexto (Groq gratis), el HPM y el troubleshooting se buscan en vez de ir en el prompt
+function herramientas(graficas, conHpm) {
   const { M } = D;
-  return [
-    betaTool({
+  const nombre = s => (hpm.estaciones.find(e => e.slug === s) || {}).nombre || s;
+  const ESTACION = { type: 'string', enum: hpm.estaciones.map(e => e.slug), description: 'id de la estación' };
+  const lista = [
+    {
       name: 'kpi_resumen', description: 'Indicadores (fallas, downtime, espera del técnico, loading, BDR, MTTR, MTBF) de un periodo, opcionalmente de una línea o máquina.',
       inputSchema: { type: 'object', properties: PERIODO, required: ['anio'], additionalProperties: false },
       run: async i => { const f = filtro(i); return JSON.stringify({ periodo: describir(f), ...resumen(M.calcular(f)) }); },
-    }),
-    betaTool({
+    },
+    {
       name: 'kpi_ranking', description: 'Ranking de líneas, máquinas, tipos de falla o turnos en un periodo, ordenado por número de fallas o por downtime.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['anio', 'por'], properties: { ...PERIODO,
         por: { type: 'string', enum: Object.keys(POR) }, orden: { type: 'string', enum: ['fallas', 'downtime'] },
@@ -179,8 +184,8 @@ function herramientas(graficas) {
         if (i.orden !== 'downtime') g.sort((a, b) => b.fallas - a.fallas);
         return JSON.stringify({ periodo: describir(f), total: g.length, filas: g.slice(0, i.limite || 10).map(x => ({ nombre: x.nombre, linea: x.lin, ...resumen(x) })) });
       },
-    }),
-    betaTool({
+    },
+    {
       name: 'buscar_maquinas', description: 'Busca nombres exactos de máquinas registradas en ANDON por texto y/o línea.',
       inputSchema: { type: 'object', additionalProperties: false, properties: { texto: { type: 'string' }, linea: { type: 'string' } } },
       run: async i => {
@@ -188,8 +193,8 @@ function herramientas(graficas) {
         const m = M.maquinas(i.linea || null).filter(x => n(x).includes(q));
         return JSON.stringify({ total: m.length, maquinas: m.slice(0, 60) });
       },
-    }),
-    betaTool({
+    },
+    {
       name: 'graficar_kpi', description: 'Genera una gráfica que se muestra al usuario. por=mes: tendencia mensual del periodo; por=linea/maquina/falla/turno: comparación del periodo (top 15).',
       inputSchema: { type: 'object', additionalProperties: false, required: ['kpi', 'por', 'anio'], properties: { ...PERIODO,
         kpi: { type: 'string', enum: Object.keys(KPI) }, por: { type: 'string', enum: ['mes', ...Object.keys(POR)] },
@@ -211,27 +216,87 @@ function herramientas(graficas) {
         graficas.push({ titulo, tipo: i.tipo === 'linea' ? 'line' : 'bar', horizontal: i.por !== 'mes', etiquetas, datos, unidad });
         return JSON.stringify({ grafica: titulo, etiquetas, datos });
       },
-    }),
+    },
   ];
+  if (conHpm) lista.push(
+    {
+      name: 'buscar_hpm', description: 'Busca en las hojas HPM (mantenimiento preventivo: qué revisar, norma, contramedida, herramienta, material, tiempo, frecuencia) y en troubleshooting (fallas y sus causas). Pasar la pregunta del usuario tal cual.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['pregunta'], properties: { pregunta: { type: 'string' }, estacion: ESTACION } },
+      run: async i => {
+        const r = responderLocal(String(i.pregunta || ''), i.estacion || undefined);
+        if (!r) return 'Sin resultados.';
+        return JSON.stringify({ nota: r.texto, valores: r.valores,
+          pasos: (r.pasos || []).slice(0, 8).map(p => ({ estacion: nombre(p.e), paso: p.n, seccion: p.sec, punto: p.punto, norma: valor(p, 'norma'),
+            contramedida: valor(p, 'contramedida'), herramienta: valor(p, 'hta'), material: valor(p, 'material'), tiempo: valor(p, 'tiempo'),
+            frecuencia: valor(p, 'frec'), condicion: valor(p, 'hora') })),
+          fallas: (r.fallas || []).map(f => ({ estacion: nombre(f.e), efecto: f.efecto, causas: f.causas })) });
+      },
+    },
+    {
+      name: 'troubleshooting', description: 'Sin efecto: lista los efectos de falla de una estación. Con efecto: las posibles causas de los efectos que coinciden.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['estacion'], properties: { estacion: ESTACION, efecto: { type: 'string' } } },
+      run: async i => {
+        const n = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        const deEstacion = hpm.fallas.filter(f => f.e === i.estacion);
+        if (!i.efecto) return JSON.stringify(deEstacion.map(f => `${f.n}. [${f.categoria}] ${f.efecto}`));
+        const palabras = n(i.efecto).split(/\W+/).filter(w => w.length > 2);
+        const hits = deEstacion.filter(f => palabras.some(w => n(f.efecto).includes(w)));
+        return JSON.stringify((hits.length ? hits : deEstacion).slice(0, 6).map(f => ({ efecto: f.efecto, causas: f.causas })));
+      },
+    });
+  return lista;
 }
 
 const cliente = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? new Anthropic() : null;
 
+const estado = contexto => `Datos ANDON: ${D.registros.length} reportes; años ${D.M.anios.join(', ')}; último reporte ${D.M.ultima}. ` +
+  `Líneas de ANDON: ${D.M.lineasConDatos.join(' | ')}. Hoy es ${new Date().toISOString().slice(0, 10)}.` + contexto;
+
 async function chatIA(mensajes, contexto) {
-  const graficas = [], M = D.M;
-  const estado = `Datos ANDON: ${D.registros.length} reportes; años ${M.anios.join(', ')}; último reporte ${M.ultima}. ` +
-    `Líneas de ANDON: ${M.lineasConDatos.join(' | ')}. Hoy es ${new Date().toISOString().slice(0, 10)}.` + contexto;
+  const graficas = [];
   const final = await cliente.beta.messages.toolRunner({
     model: MODELO, max_tokens: 4096, max_iterations: 8,
     output_config: { effort: 'low' },
     // lo fijo (instrucciones + datos de estaciones) va en caché; lo que cambia, después
-    system: [{ type: 'text', text: INSTRUCCIONES, cache_control: { type: 'ephemeral', ttl: '1h' } }, { type: 'text', text: estado }],
-    tools: herramientas(graficas),
+    system: [{ type: 'text', text: INSTRUCCIONES, cache_control: { type: 'ephemeral', ttl: '1h' } }, { type: 'text', text: estado(contexto) }],
+    tools: herramientas(graficas).map(betaTool),
     messages: mensajes,
   });
   if (final.stop_reason === 'refusal') return { texto: 'No puedo responder esa pregunta. Pregunte sobre las estaciones o los indicadores de mantenimiento.', graficas };
   const texto = final.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
   return { texto: texto || (graficas.length ? '' : 'No obtuve respuesta. Intente reformular la pregunta.'), graficas };
+}
+
+// ------------------------------------------------------------------ Groq (Llama, plan gratis)
+// El plan gratis limita tokens por minuto y por día: el prompt va corto y el HPM se consulta con herramientas.
+const GROQ_MODELOS = [process.env.GROQ_MODELO || 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const INSTRUCCIONES_GROQ = INSTRUCCIONES.slice(0, INSTRUCCIONES.indexOf('# DATOS DE LAS ESTACIONES')).replace(
+  'Responde SOLO con la información de abajo (hojas HPM y troubleshooting de las estaciones DXD) o con lo que devuelvan las herramientas de indicadores.',
+  'Responde SOLO con lo que devuelvan las herramientas: buscar_hpm y troubleshooting para las máquinas, kpi_* y graficar_kpi para indicadores. Llama una herramienta antes de responder.') +
+  `\nEstaciones: ${hpm.estaciones.map(e => `${e.nombre} (id ${e.slug})`).join('; ')}.`;
+
+async function chatGroq(mensajes, contexto, modelo) {
+  const graficas = [], tools = herramientas(graficas, true);
+  const msgs = [{ role: 'system', content: `${INSTRUCCIONES_GROQ}\n${estado(contexto)}` }, ...mensajes];
+  for (let vuelta = 0; vuelta < 6; vuelta++) {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelo, messages: msgs, temperature: 0.2, max_tokens: 1024, tool_choice: 'auto',
+        tools: tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })) }),
+    });
+    if (!r.ok) throw Object.assign(new Error((await r.text()).slice(0, 300)), { status: r.status });
+    const m = (await r.json()).choices[0].message;
+    if (!m.tool_calls || !m.tool_calls.length) return { texto: (m.content || '').trim(), graficas };
+    msgs.push({ role: 'assistant', content: m.content || '', tool_calls: m.tool_calls });
+    for (const c of m.tool_calls) {
+      const t = tools.find(x => x.name === c.function.name);
+      let salida;
+      try { salida = t ? await t.run(JSON.parse(c.function.arguments || '{}')) : `No existe la herramienta ${c.function.name}.`; }
+      catch (e) { salida = `Error: ${e.message}`; }  // el modelo ve el error y corrige los argumentos
+      msgs.push({ role: 'tool', tool_call_id: c.id, content: String(salida).slice(0, 6000) });
+    }
+  }
+  return { texto: 'No terminé la consulta. Intente una pregunta más concreta.', graficas };
 }
 
 // sin API key (o si falla): el buscador que ya tenía el sitio, en texto
@@ -270,6 +335,12 @@ async function chat(req, res) {
   if (!mensajes.length || mensajes.at(-1).role !== 'user') return json(req, res, 400, { error: 'Falta la pregunta.' });
   const estacion = hpm.estaciones.find(e => e.slug === b.estacion);
   const contexto = estacion ? ` El usuario está en la página de la estación ${estacion.nombre}: si no nombra otra, la pregunta es sobre esa.` : '';
+  // Groq: si el modelo grande llega a su límite gratis (429) o falla, prueba el chico; luego Claude; luego el buscador local
+  if (process.env.GROQ_API_KEY) for (const modelo of GROQ_MODELOS) {
+    try { return json(req, res, 200, await chatGroq(mensajes, contexto, modelo)); } catch (e) {
+      console.error(`chat Groq ${modelo}:`, e.status || '', e.message);
+    }
+  }
   if (cliente) {
     try { return json(req, res, 200, await chatIA(mensajes, contexto)); } catch (e) {
       console.error('chat IA:', e.status || '', e.message);
@@ -285,7 +356,7 @@ const servidor = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/api/chat') return await chat(req, res);
     if (req.method === 'POST' && url === '/api/andon') return await publicar(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(req, res, 405, { error: 'Método no permitido' });
-    if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: !!cliente });
+    if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: process.env.GROQ_API_KEY ? 'groq' : cliente ? 'claude' : 'local' });
     if (url === '/andon.json') return enviar(req, res, 200, 'application/json', Buffer.from(JSON.stringify(D.registros)), D.json, { 'Cache-Control': 'no-cache' });
     const a = archivo(url);
     if (!a && !path.extname(url)) {  // /estacion/x sin diagonal final -> /estacion/x/
@@ -300,5 +371,6 @@ const servidor = http.createServer(async (req, res) => {
     if (!e.estado) console.error(e);
   }
 });
-servidor.listen(process.env.PORT || 10000, () =>
-  console.log(`Mantenimiento en :${process.env.PORT || 10000} · ${D.registros.length} reportes · chatbot ${cliente ? MODELO : 'local (sin ANTHROPIC_API_KEY)'}`));
+if (require.main === module) servidor.listen(process.env.PORT || 10000, () =>
+  console.log(`Mantenimiento en :${process.env.PORT || 10000} · ${D.registros.length} reportes · chatbot ${process.env.GROQ_API_KEY ? 'Groq ' + GROQ_MODELOS[0] : cliente ? MODELO : 'local (sin GROQ_API_KEY ni ANTHROPIC_API_KEY)'}`));
+module.exports = { herramientas };  // para test_build.py
