@@ -1,6 +1,6 @@
 // Servidor de Mantenimiento para Render: sirve el sitio que genera build.py (_site), el chatbot (/api/chat) y la
 // publicación de reportes ANDON (/api/andon). Sin framework: el sitio es estático y las dos rutas caben aquí.
-//   GROQ_API_KEY       chatbot gratis con Llama en Groq (GROQ_MODELO para cambiar el modelo)
+//   GROQ_API_KEY       chatbot gratis en Groq (gpt-oss; GROQ_MODELOS="a,b" para cambiar modelos)
 //   ANTHROPIC_API_KEY  chatbot con Claude Haiku (si no hay Groq); sin ninguna responde el buscador local (asistente.js / andon.js)
 //   DATA_DIR           carpeta donde se guarda andon.json publicado (en Render: disco persistente montado aquí)
 //   ANDON_CLAVE        si existe, publicar pide esta clave
@@ -138,7 +138,7 @@ Responde SOLO con la información de abajo (hojas HPM y troubleshooting de las e
 - Indicadores (BDR, MTTR, MTBF, fallas, downtime, espera del técnico) salen de reportes ANDON: usa siempre las herramientas, nunca calcules de memoria. BDR = downtime ÷ loading × 100 (%); MTTR = downtime ÷ fallas (min); MTBF = (loading − downtime) ÷ fallas ÷ 60 (h).
 - Si piden una gráfica, tendencia o comparación visual, llama a graficar_kpi (una vez por gráfica); la gráfica se muestra sola debajo de tu respuesta, así que solo coméntala en 1–2 líneas.
 - Si no dicen periodo, usa el mes más reciente con datos. Si no dicen año, el año de los datos más recientes. Para nombres de línea o máquina que no conozcas exactamente, usa buscar_maquinas.
-- Formato: texto plano, **negritas** y listas con "- ". Sin tablas ni encabezados.
+- Formato: texto plano, **negritas** y listas con "- ". Sin tablas, encabezados, cursivas, JSON ni bloques de código.
 
 # DATOS DE LAS ESTACIONES
 ${CONOCIMIENTO}`;
@@ -214,7 +214,7 @@ function herramientas(graficas, conHpm) {
         if (!datos.length) return `Sin datos para ${describir(f)}.`;
         const titulo = `${nombre}${unidad ? ` (${unidad})` : ''} por ${i.por} · ${describir(f)}`;
         graficas.push({ titulo, tipo: i.tipo === 'linea' ? 'line' : 'bar', horizontal: i.por !== 'mes', etiquetas, datos, unidad });
-        return JSON.stringify({ grafica: titulo, etiquetas, datos });
+        return `Gráfica «${titulo}» lista: el usuario ya la ve. No repitas los datos ni el JSON; coméntala en 1–2 líneas. Valores: ${etiquetas.map((e, k) => `${e} ${datos[k]}`).join(", ")}`;
       },
     },
   ];
@@ -267,9 +267,10 @@ async function chatIA(mensajes, contexto) {
   return { texto: texto || (graficas.length ? '' : 'No obtuve respuesta. Intente reformular la pregunta.'), graficas };
 }
 
-// ------------------------------------------------------------------ Groq (Llama, plan gratis)
+// ------------------------------------------------------------------ Groq (plan gratis)
 // El plan gratis limita tokens por minuto y por día: el prompt va corto y el HPM se consulta con herramientas.
-const GROQ_MODELOS = [process.env.GROQ_MODELO || 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+// Groq retira modelos seguido (los Llama ya no existen): GROQ_MODELOS="modelo1,modelo2" los cambia sin tocar código
+const GROQ_MODELOS = (process.env.GROQ_MODELOS || process.env.GROQ_MODELO || 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',').map(s => s.trim()).filter(Boolean);
 const INSTRUCCIONES_GROQ = INSTRUCCIONES.slice(0, INSTRUCCIONES.indexOf('# DATOS DE LAS ESTACIONES')).replace(
   'Responde SOLO con la información de abajo (hojas HPM y troubleshooting de las estaciones DXD) o con lo que devuelvan las herramientas de indicadores.',
   'Responde SOLO con lo que devuelvan las herramientas: buscar_hpm y troubleshooting para las máquinas, kpi_* y graficar_kpi para indicadores. Llama una herramienta antes de responder.') +
@@ -336,17 +337,20 @@ async function chat(req, res) {
   const estacion = hpm.estaciones.find(e => e.slug === b.estacion);
   const contexto = estacion ? ` El usuario está en la página de la estación ${estacion.nombre}: si no nombra otra, la pregunta es sobre esa.` : '';
   // Groq: si el modelo grande llega a su límite gratis (429) o falla, prueba el chico; luego Claude; luego el buscador local
+  const fallos = [];  // motivo corto (estado + código del proveedor) para verlo en el chat sin abrir los logs
+  const fallo = (quien, e) => {
+    console.error(`chat ${quien}:`, e.status || '', e.message);
+    let codigo = '';
+    try { const x = JSON.parse(e.message).error; codigo = x.code || x.type || ''; } catch { codigo = e.status ? '' : e.message.slice(0, 80); }
+    fallos.push(`${quien} ${e.status || ''} ${codigo}`.replace(/\s+/g, ' ').trim());
+  };
   if (process.env.GROQ_API_KEY) for (const modelo of GROQ_MODELOS) {
-    try { return json(req, res, 200, await chatGroq(mensajes, contexto, modelo)); } catch (e) {
-      console.error(`chat Groq ${modelo}:`, e.status || '', e.message);
-    }
+    try { return json(req, res, 200, await chatGroq(mensajes, contexto, modelo)); } catch (e) { fallo(modelo, e); }
   }
   if (cliente) {
-    try { return json(req, res, 200, await chatIA(mensajes, contexto)); } catch (e) {
-      console.error('chat IA:', e.status || '', e.message);
-    }
+    try { return json(req, res, 200, await chatIA(mensajes, contexto)); } catch (e) { fallo('Claude', e); }
   }
-  json(req, res, 200, { texto: chatLocal(mensajes.at(-1).content, estacion && estacion.slug), graficas: [], local: true });
+  json(req, res, 200, { texto: chatLocal(mensajes.at(-1).content, estacion && estacion.slug), graficas: [], local: true, motivo: fallos.join(' · ') });
 }
 
 // ------------------------------------------------------------------ rutas

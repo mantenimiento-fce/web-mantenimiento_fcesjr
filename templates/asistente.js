@@ -315,7 +315,7 @@
       espera.className = 'chat-msg chat-bot'; espera.replaceChildren();
       formato(d.texto || '', espera);
       for (const g of d.graficas || []) await grafica(g, espera);
-      if (d.local) espera.append(el('small', 'chat-nota', 'Respuesta del buscador local (asistente IA no disponible).'));
+      if (d.local) espera.append(el('small', 'chat-nota', 'Respuesta del buscador local (asistente IA no disponible).' + (d.motivo ? ` Motivo: ${d.motivo}` : '')));
       historial.push({ role: 'assistant', content: d.texto || (d.graficas || []).map(g => `[Gráfica: ${g.titulo}]`).join('\n') || '…' });
     } catch (e) {
       historial.pop();

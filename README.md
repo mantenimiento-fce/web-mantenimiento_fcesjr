@@ -14,8 +14,8 @@ Sitio web (Render, Docker) generado con `build.py` y servido por `server.js`:
 Cada página tiene un chat (`templates/_consulta.html` + `templates/asistente.js`) que pregunta a `/api/chat` de `server.js`.
 El modelo se elige por la variable que esté definida (en este orden):
 
-1. **`GROQ_API_KEY` → Llama en Groq (gratis)**. Usa `llama-3.3-70b-versatile` (o `GROQ_MODELO`) y, si llega a su límite
-   gratis o falla, `llama-3.1-8b-instant`. Como el plan gratis limita tokens por minuto y por día, el HPM y el
+1. **`GROQ_API_KEY` → Groq (gratis)**. Usa `openai/gpt-oss-120b` y, si llega a su límite (8 000 tokens/min en el plan gratis)
+   o falla, `openai/gpt-oss-20b` (cambiar con `GROQ_MODELOS="a,b"`; los Llama ya no existen). Como el plan gratis limita tokens por minuto y por día, el HPM y el
    troubleshooting no van en el prompt: el modelo los consulta con las herramientas `buscar_hpm` y `troubleshooting`.
 2. **`ANTHROPIC_API_KEY` → Claude Haiku 5.5 (de pago, centavos)**, con todas las hojas en el prompt (en caché).
 3. **Ninguna (o fallan) → el buscador local** de siempre (`crear` en `asistente.js`); para que entienda palabras
