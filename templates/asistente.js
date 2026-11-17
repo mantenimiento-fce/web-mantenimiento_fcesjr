@@ -291,7 +291,7 @@
     const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
     const fmt = v => v == null ? '—' : v.toLocaleString('es-MX', { maximumFractionDigits: 2 });
     new Chart(canvas, {
-      type: g.tipo, data: { labels: g.etiquetas, datasets: [{ label: g.titulo, data: g.datos, backgroundColor: '#2f4fe0', borderColor: '#2f4fe0', borderRadius: 4, maxBarThickness: 32, tension: .25 }] },
+      type: 'bar', data: { labels: g.etiquetas, datasets: [{ label: g.titulo, data: g.datos, backgroundColor: '#2f4fe0', borderColor: '#2f4fe0', borderRadius: 4, maxBarThickness: 32 }] },
       options: { responsive: true, maintainAspectRatio: false, indexAxis: g.horizontal ? 'y' : 'x', animation: { duration: 250 },
         plugins: { legend: { display: false }, title: { display: true, text: g.titulo, color: css('--c-ink'), font: { size: 13 } },
                    tooltip: { callbacks: { label: c => `${fmt(c.parsed[g.horizontal ? 'x' : 'y'])} ${g.unidad}` } } },

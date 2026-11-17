@@ -1,6 +1,7 @@
 // Servidor de Mantenimiento para Render: sirve el sitio que genera build.py (_site), el chatbot (/api/chat) y la
 // publicación de reportes ANDON (/api/andon). Sin framework: el sitio es estático y las dos rutas caben aquí.
-//   GROQ_API_KEY       chatbot gratis en Groq (gpt-oss; GROQ_MODELOS="a,b" para cambiar modelos)
+//   GEMINI_API_KEY     chatbot principal, gratis en Google AI Studio (GEMINI_MODELOS="a,b" para cambiar modelos)
+//   GROQ_API_KEY       respaldo gratis en Groq (gpt-oss; GROQ_MODELOS="a,b" para cambiar modelos)
 //   ANTHROPIC_API_KEY  chatbot con Claude Haiku (si no hay Groq); sin ninguna responde el buscador local (asistente.js / andon.js)
 //   DATA_DIR           carpeta donde se guarda andon.json publicado (en Render: disco persistente montado aquí)
 //   ANDON_CLAVE        si existe, publicar pide esta clave
@@ -15,6 +16,8 @@ const { betaTool } = require('@anthropic-ai/sdk/helpers/beta/json-schema');
 const ANDON = require('./templates/andon.js');
 const { crear, valor } = require('./templates/asistente.js');
 
+try { process.loadEnvFile(path.join(__dirname, '.env')); } catch {}  // claves locales (en Render van en el panel); .env no se sube a git
+
 const SITE = path.join(__dirname, '_site');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const ANDON_GUARDADO = path.join(DATA_DIR, 'andon.json');
@@ -25,10 +28,26 @@ const leer = f => JSON.parse(fs.readFileSync(path.join(SITE, f), 'utf8'));
 const hpm = leer('hpm.json');
 const lineas = leer('lineas.json');
 const responderLocal = crear(hpm);
-let D;  // { registros, M, consulta, json }
+let D;  // { registros, M, consulta, json, tabla }
+const respuestas = new Map();  // caché de respuestas de IA: pregunta (con historial y estación) -> respuesta; se vacía al publicar
 function usarRegistros(registros) {
-  D = { registros, M: ANDON.crearModelo(registros, lineas), consulta: ANDON.crearConsulta(registros, lineas),
-        json: zlib.gzipSync(JSON.stringify(registros)) };
+  const M = ANDON.crearModelo(registros, lineas);
+  D = { registros, M, consulta: ANDON.crearConsulta(registros, lineas), json: zlib.gzipSync(JSON.stringify(registros)), tabla: tablaKpi(M) };
+  respuestas.clear();
+}
+
+// KPIs ya calculados en el prompt: el modelo responde lo común sin adivinar filtros de herramientas
+function tablaKpi(M) {
+  const r = x => x == null ? '—' : Math.round(x * 100) / 100, fila = k => `${k.fallas} | ${r(k.paro)} | ${r(k.bdr)} | ${r(k.mttr)} | ${r(k.mtbf)}`;
+  const t = ['# KPIs YA CALCULADOS (exactos; cópialos tal cual). Columnas: fallas | downtime min | BDR % | MTTR min | MTBF h'];
+  for (const anio of M.anios.slice(-2)) {
+    t.push(`## Planta (sin SMD) ${anio}, por mes`);
+    for (const x of M.serie(anio).filter(x => x.conDatos)) t.push(`${ANDON.MESES[x.mes - 1]} ${anio}: ${fila(x)}`);
+    t.push(`Año ${anio} completo: ${fila(M.calcular({ anio }))}`);
+    t.push(`## Por línea, año ${anio} completo`);
+    for (const x of M.grupos({ anio }, 'lin')) t.push(`${x.nombre}: ${fila(x)}`);
+  }
+  return t.join('\n');
 }
 {
   // lo publicado en el servidor se combina con lo de la imagen: ninguno de los dos pierde reportes
@@ -136,9 +155,19 @@ const INSTRUCCIONES = `Eres el asistente del departamento de Mantenimiento (plan
 Responde SOLO con la información de abajo (hojas HPM y troubleshooting de las estaciones DXD) o con lo que devuelvan las herramientas de indicadores. Si algo no está en los datos, dilo; no inventes valores, pasos ni causas.
 - Al citar un punto del HPM di la estación y el número de paso. Para fallas, lista las posibles causas en orden.
 - Indicadores (BDR, MTTR, MTBF, fallas, downtime, espera del técnico) salen de reportes ANDON: usa siempre las herramientas, nunca calcules de memoria. BDR = downtime ÷ loading × 100 (%); MTTR = downtime ÷ fallas (min); MTBF = (loading − downtime) ÷ fallas ÷ 60 (h).
-- Si piden una gráfica, tendencia o comparación visual, llama a graficar_kpi (una vez por gráfica); la gráfica se muestra sola debajo de tu respuesta, así que solo coméntala en 1–2 líneas.
+- Si piden graficar, una gráfica, tendencia o comparación visual, SIEMPRE llama a graficar_kpi (una vez por gráfica); solo hace barras, igual que el dashboard. La gráfica se muestra sola debajo de tu respuesta: coméntala en 1–2 líneas. Nunca dibujes gráficas con texto, símbolos ni tablas, ni ofrezcas otro tipo (dispersión, pastel, líneas).
+- Cifras: copia los valores EXACTAMENTE como los devuelve la herramienta. No redondees, no uses "aprox.", "~" ni "≈", no calcules promedios, porcentajes ni totales propios, y no completes meses o líneas sin datos. Un mes con 0 fallas es "sin registros".
 - Si no dicen periodo, usa el mes más reciente con datos. Si no dicen año, el año de los datos más recientes. Para nombres de línea o máquina que no conozcas exactamente, usa buscar_maquinas.
+- Si la sección KPIS YA CALCULADOS tiene el dato exacto (planta por mes o año, línea por año), úsalo sin llamar herramientas. Para otro filtro (línea en un mes, máquina, ranking, rango) usa las herramientas.
+- La sección INTERPRETACIÓN dice qué periodo y línea detectó el sistema en la pregunta: úsala para los argumentos salvo que el usuario diga otra cosa.
+- Números con punto decimal (15.42), nunca coma decimal.
 - Formato: texto plano, **negritas** y listas con "- ". Sin tablas, encabezados, cursivas, JSON ni bloques de código.
+
+# EJEMPLOS (pregunta -> qué hacer)
+- "grafica el mttr de honda este año" -> graficar_kpi {kpi:"mttr", por:"mes", anio:<año>, linea:"Honda 25SA"}
+- "qué línea tuvo más fallas en octubre" -> kpi_ranking {por:"linea", anio:<año>, mes_desde:10, mes_hasta:10, orden:"fallas"}
+- "bdr de la planta en enero" -> si está en KPIS YA CALCULADOS, cítalo; si no, kpi_resumen {anio:<año>, mes_desde:1, mes_hasta:1}
+- "compara las líneas por downtime" -> graficar_kpi {kpi:"downtime", por:"linea", anio:<año>}
 
 # DATOS DE LAS ESTACIONES
 ${CONOCIMIENTO}`;
@@ -195,26 +224,26 @@ function herramientas(graficas, conHpm) {
       },
     },
     {
-      name: 'graficar_kpi', description: 'Genera una gráfica que se muestra al usuario. por=mes: tendencia mensual del periodo; por=linea/maquina/falla/turno: comparación del periodo (top 15).',
+      name: 'graficar_kpi', description: 'Genera la gráfica de barras (la misma del dashboard) que se muestra al usuario. por=mes: barras por mes del periodo; por=linea/maquina/falla/turno: barras horizontales del periodo (top 15). Valores reales de ANDON.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['kpi', 'por', 'anio'], properties: { ...PERIODO,
-        kpi: { type: 'string', enum: Object.keys(KPI) }, por: { type: 'string', enum: ['mes', ...Object.keys(POR)] },
-        tipo: { type: 'string', enum: ['barras', 'linea'], description: 'Por defecto barras' } } },
+        kpi: { type: 'string', enum: Object.keys(KPI) }, por: { type: 'string', enum: ['mes', ...Object.keys(POR)] } } },
       run: async i => {
         if (graficas.length >= 4) return 'Ya hay 4 gráficas en esta respuesta; no se generan más.';
         const f = filtro(i), [campo, nombre, unidad] = KPI[i.kpi];
         let etiquetas, datos;
-        if (i.por === 'mes') {
-          const meses = ANDON.MESES.map((_, k) => k + 1).filter(m => m >= (f.desde || 1) && m <= (f.hasta || 12) && M.hayDatos(f.anio, m));
-          etiquetas = meses.map(m => ANDON.MESES[m - 1].slice(0, 3));
-          datos = meses.map(m => r1(M.calcular({ ...f, mes: m, desde: null, hasta: null })[campo]));
+        if (i.por === 'mes') {  // solo meses con registros de la selección (un mes con 1 reporte cuenta como sin registros)
+          const filas = ANDON.MESES.map((_, k) => ({ m: k + 1, k: M.calcular({ ...f, mes: k + 1, desde: null, hasta: null }) }))
+            .filter(x => x.m >= (f.desde || 1) && x.m <= (f.hasta || 12) && x.k.fallas && x.k[campo] != null);
+          etiquetas = filas.map(x => ANDON.MESES[x.m - 1].slice(0, 3));
+          datos = filas.map(x => r1(x.k[campo]));
         } else {
           const g = M.grupos(f, POR[i.por]).filter(x => x.fallas && x[campo] != null).sort((a, b) => b[campo] - a[campo]).slice(0, 15);
           etiquetas = g.map(x => x.nombre); datos = g.map(x => r1(x[campo]));
         }
         if (!datos.length) return `Sin datos para ${describir(f)}.`;
         const titulo = `${nombre}${unidad ? ` (${unidad})` : ''} por ${i.por} · ${describir(f)}`;
-        graficas.push({ titulo, tipo: i.tipo === 'linea' ? 'line' : 'bar', horizontal: i.por !== 'mes', etiquetas, datos, unidad });
-        return `Gráfica «${titulo}» lista: el usuario ya la ve. No repitas los datos ni el JSON; coméntala en 1–2 líneas. Valores: ${etiquetas.map((e, k) => `${e} ${datos[k]}`).join(", ")}`;
+        graficas.push({ titulo, tipo: 'bar', horizontal: i.por !== 'mes', etiquetas, datos, unidad });
+        return `Gráfica de barras «${titulo}» lista: el usuario ya la ve. Coméntala en 1–2 líneas; si citas un valor, cópialo exacto de aquí: ${etiquetas.map((e, k) => `${e} ${datos[k]}`).join(", ")}`;
       },
     },
   ];
@@ -249,8 +278,23 @@ function herramientas(graficas, conHpm) {
 
 const cliente = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? new Anthropic() : null;
 
-const estado = contexto => `Datos ANDON: ${D.registros.length} reportes; años ${D.M.anios.join(', ')}; último reporte ${D.M.ultima}. ` +
-  `Líneas de ANDON: ${D.M.lineasConDatos.join(' | ')}. Hoy es ${new Date().toISOString().slice(0, 10)}.` + contexto;
+// interpretación de la pregunta hecha por el sistema (no se toca el mensaje del usuario)
+function interpretar(pregunta) {
+  if (!ANDON.esKpi(pregunta) && !GRAFICA_RE.test(ANDON_NORM(pregunta))) return '';
+  const f = D.consulta.entender(pregunta);
+  return `\n# INTERPRETACIÓN\nPeriodo: ${f.mes ? `${ANDON.MESES[f.mes - 1]} ${f.anio} (mes_desde=mes_hasta=${f.mes})` : `año ${f.anio} completo`}; ` +
+    `línea: ${f.linea || 'no nombrada (toda la planta, salvo que el historial diga otra)'}.`;
+}
+const estado = (contexto, pregunta = '') => `Datos ANDON: ${D.registros.length} reportes; años ${D.M.anios.join(', ')}; último reporte ${D.M.ultima}. ` +
+  `Líneas de ANDON: ${D.M.lineasConDatos.join(' | ')}. Hoy es ${new Date().toISOString().slice(0, 10)}.` + contexto +
+  `\n${D.tabla}${interpretar(pregunta)}`;
+
+// cifras de la respuesta que no aparecen en ninguna fuente (prompt, herramientas, mensajes). Ignora enteros ≤ 31 (días, pasos, meses).
+const numeros = s => (String(s).match(/\d[\d,]*(?:\.\d+)?/g) || []).map(x => +x.replace(/,/g, '')).filter(Number.isFinite);
+function cifrasSinFuente(texto, fuentes) {
+  const ok = new Set(numeros(fuentes.join('\n')));
+  return [...new Set(numeros(texto).filter(n => !(Number.isInteger(n) && n <= 31) && !ok.has(n)))];
+}
 
 async function chatIA(mensajes, contexto) {
   const graficas = [];
@@ -258,7 +302,7 @@ async function chatIA(mensajes, contexto) {
     model: MODELO, max_tokens: 4096, max_iterations: 8,
     output_config: { effort: 'low' },
     // lo fijo (instrucciones + datos de estaciones) va en caché; lo que cambia, después
-    system: [{ type: 'text', text: INSTRUCCIONES, cache_control: { type: 'ephemeral', ttl: '1h' } }, { type: 'text', text: estado(contexto) }],
+    system: [{ type: 'text', text: INSTRUCCIONES, cache_control: { type: 'ephemeral', ttl: '1h' } }, { type: 'text', text: estado(contexto, mensajes.at(-1).content) }],
     tools: herramientas(graficas).map(betaTool),
     messages: mensajes,
   });
@@ -267,34 +311,61 @@ async function chatIA(mensajes, contexto) {
   return { texto: texto || (graficas.length ? '' : 'No obtuve respuesta. Intente reformular la pregunta.'), graficas };
 }
 
-// ------------------------------------------------------------------ Groq (plan gratis)
-// El plan gratis limita tokens por minuto y por día: el prompt va corto y el HPM se consulta con herramientas.
-// Groq retira modelos seguido (los Llama ya no existen): GROQ_MODELOS="modelo1,modelo2" los cambia sin tocar código
-const GROQ_MODELOS = (process.env.GROQ_MODELOS || process.env.GROQ_MODELO || 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',').map(s => s.trim()).filter(Boolean);
-const INSTRUCCIONES_GROQ = INSTRUCCIONES.slice(0, INSTRUCCIONES.indexOf('# DATOS DE LAS ESTACIONES')).replace(
+// ------------------------------------------------------------------ Gemini y Groq (planes gratis, API compatible con OpenAI)
+// Los planes gratis limitan tokens por minuto y por día: el prompt va corto y el HPM se consulta con herramientas.
+// Los modelos se cambian sin tocar código: GEMINI_MODELOS="a,b", GROQ_MODELOS="a,b". Los alias *-latest de Gemini no se retiran.
+const lista = (v, def) => (v || def).split(',').map(s => s.trim()).filter(Boolean);
+const PROVEEDORES = [
+  { nombre: 'Gemini', clave: 'GEMINI_API_KEY', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    modelos: lista(process.env.GEMINI_MODELOS, 'gemini-flash-lite-latest,gemini-flash-latest'), extra: { max_tokens: 4096, reasoning_effort: 'low' } },
+  { nombre: 'Groq', clave: 'GROQ_API_KEY', url: 'https://api.groq.com/openai/v1/chat/completions',
+    modelos: lista(process.env.GROQ_MODELOS || process.env.GROQ_MODELO, 'openai/gpt-oss-120b,openai/gpt-oss-20b'), extra: { max_tokens: 1024 } },
+];
+const INSTRUCCIONES_CORTAS = INSTRUCCIONES.slice(0, INSTRUCCIONES.indexOf('# DATOS DE LAS ESTACIONES')).replace(
   'Responde SOLO con la información de abajo (hojas HPM y troubleshooting de las estaciones DXD) o con lo que devuelvan las herramientas de indicadores.',
-  'Responde SOLO con lo que devuelvan las herramientas: buscar_hpm y troubleshooting para las máquinas, kpi_* y graficar_kpi para indicadores. Llama una herramienta antes de responder.') +
+  'Responde SOLO con lo que devuelvan las herramientas (buscar_hpm y troubleshooting para las máquinas, kpi_* y graficar_kpi para indicadores) o con la sección KPIS YA CALCULADOS. Para máquinas llama una herramienta antes de responder.') +
   `\nEstaciones: ${hpm.estaciones.map(e => `${e.nombre} (id ${e.slug})`).join('; ')}.`;
 
-async function chatGroq(mensajes, contexto, modelo) {
-  const graficas = [], tools = herramientas(graficas, true);
-  const msgs = [{ role: 'system', content: `${INSTRUCCIONES_GROQ}\n${estado(contexto)}` }, ...mensajes];
-  for (let vuelta = 0; vuelta < 6; vuelta++) {
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST', headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: modelo, messages: msgs, temperature: 0.2, max_tokens: 1024, tool_choice: 'auto',
+const ANDON_NORM = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const GRAFICA_RE = /\bgrafic|\bchart\b|\bgrafo\b|\bvisualiz|\bbarras?\b/;
+
+async function chatCompatible(p, modelo, mensajes, contexto) {
+  const graficas = [], tools = herramientas(graficas, true), pregunta = mensajes.at(-1).content;
+  const msgs = [{ role: 'system', content: `${INSTRUCCIONES_CORTAS}\n${estado(contexto, pregunta)}` }, ...mensajes];
+  const fuentes = msgs.map(m => m.content);  // todo lo que el modelo puede citar; se suman las salidas de herramientas
+  // si piden gráfica, la primera vuelta obliga a graficar_kpi: el modelo a veces solo describe los datos
+  const pideGrafica = GRAFICA_RE.test(ANDON_NORM(pregunta));
+  let corregido = false;
+  for (let vuelta = 0; vuelta < 7; vuelta++) {
+    const forzar = pideGrafica && vuelta === 0;
+    const r = await fetch(p.url, {
+      signal: AbortSignal.timeout(30e3),  // un modelo saturado puede colgarse: se pasa al siguiente
+      method: 'POST', headers: { Authorization: `Bearer ${process.env[p.clave]}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelo, messages: msgs, temperature: 0, ...p.extra,
+        tool_choice: forzar ? { type: 'function', function: { name: 'graficar_kpi' } } : 'auto',
         tools: tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })) }),
     });
     if (!r.ok) throw Object.assign(new Error((await r.text()).slice(0, 300)), { status: r.status });
     const m = (await r.json()).choices[0].message;
-    if (!m.tool_calls || !m.tool_calls.length) return { texto: (m.content || '').trim(), graficas };
-    msgs.push({ role: 'assistant', content: m.content || '', tool_calls: m.tool_calls });
+    if (!m.tool_calls || !m.tool_calls.length) {
+      const texto = (m.content || '').trim(), malas = cifrasSinFuente(texto, fuentes);
+      if (!malas.length) return { texto, graficas };
+      // una cifra que no sale de los datos: se le pide corregir una vez; si insiste, responde el siguiente proveedor
+      if (corregido) throw new Error(`cifras sin fuente: ${malas.join(', ')}`);
+      corregido = true;
+      msgs.push({ role: 'assistant', content: texto }, { role: 'user', content: `[Sistema, no el usuario] Estas cifras no salen de los datos: ${malas.join(', ')}. ` +
+        'Reescribe la respuesta usando solo valores exactos de KPIS YA CALCULADOS o de las herramientas (llama una si hace falta), sin redondear. No menciones esta corrección.' });
+      continue;
+    }
+    msgs.push({ role: 'assistant', content: m.content || '', tool_calls: m.tool_calls });  // tal cual: Gemini exige su thought_signature
     for (const c of m.tool_calls) {
       const t = tools.find(x => x.name === c.function.name);
       let salida;
       try { salida = t ? await t.run(JSON.parse(c.function.arguments || '{}')) : `No existe la herramienta ${c.function.name}.`; }
       catch (e) { salida = `Error: ${e.message}`; }  // el modelo ve el error y corrige los argumentos
-      msgs.push({ role: 'tool', tool_call_id: c.id, content: String(salida).slice(0, 6000) });
+      salida = String(salida).slice(0, 6000);
+      fuentes.push(salida);
+      msgs.push({ role: 'tool', tool_call_id: c.id, content: salida });
     }
   }
   return { texto: 'No terminé la consulta. Intente una pregunta más concreta.', graficas };
@@ -336,7 +407,12 @@ async function chat(req, res) {
   if (!mensajes.length || mensajes.at(-1).role !== 'user') return json(req, res, 400, { error: 'Falta la pregunta.' });
   const estacion = hpm.estaciones.find(e => e.slug === b.estacion);
   const contexto = estacion ? ` El usuario está en la página de la estación ${estacion.nombre}: si no nombra otra, la pregunta es sobre esa.` : '';
-  // Groq: si el modelo grande llega a su límite gratis (429) o falla, prueba el chico; luego Claude; luego el buscador local
+  // misma pregunta, mismo historial, misma estación y mismos datos: misma respuesta, sin gastar cuota
+  const llave = JSON.stringify([estacion && estacion.slug, mensajes]);
+  if (respuestas.has(llave)) return json(req, res, 200, respuestas.get(llave));
+  const guardar = r => { if (respuestas.size >= 300) respuestas.delete(respuestas.keys().next().value); respuestas.set(llave, r); return json(req, res, 200, r); };
+  // Gemini (principal) -> Groq: si un modelo llega a su límite gratis (429), está saturado (503) o falla, prueba el siguiente;
+  // luego Claude; luego el buscador local
   const fallos = [];  // motivo corto (estado + código del proveedor) para verlo en el chat sin abrir los logs
   const fallo = (quien, e) => {
     console.error(`chat ${quien}:`, e.status || '', e.message);
@@ -344,14 +420,16 @@ async function chat(req, res) {
     try { const x = JSON.parse(e.message).error; codigo = x.code || x.type || ''; } catch { codigo = e.status ? '' : e.message.slice(0, 80); }
     fallos.push(`${quien} ${e.status || ''} ${codigo}`.replace(/\s+/g, ' ').trim());
   };
-  if (process.env.GROQ_API_KEY) for (const modelo of GROQ_MODELOS) {
-    try { return json(req, res, 200, await chatGroq(mensajes, contexto, modelo)); } catch (e) { fallo(modelo, e); }
+  for (const p of PROVEEDORES.filter(p => process.env[p.clave])) for (const modelo of p.modelos) {
+    try { return guardar(await chatCompatible(p, modelo, mensajes, contexto)); } catch (e) { fallo(modelo, e); }
   }
   if (cliente) {
-    try { return json(req, res, 200, await chatIA(mensajes, contexto)); } catch (e) { fallo('Claude', e); }
+    try { return guardar(await chatIA(mensajes, contexto)); } catch (e) { fallo('Claude', e); }
   }
   json(req, res, 200, { texto: chatLocal(mensajes.at(-1).content, estacion && estacion.slug), graficas: [], local: true, motivo: fallos.join(' · ') });
 }
+
+const iaActiva = () => [...PROVEEDORES.filter(p => process.env[p.clave]).map(p => `${p.nombre} ${p.modelos[0]}`), cliente && MODELO, 'local'].filter(Boolean).join(' -> ');
 
 // ------------------------------------------------------------------ rutas
 const servidor = http.createServer(async (req, res) => {
@@ -360,7 +438,7 @@ const servidor = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/api/chat') return await chat(req, res);
     if (req.method === 'POST' && url === '/api/andon') return await publicar(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(req, res, 405, { error: 'Método no permitido' });
-    if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: process.env.GROQ_API_KEY ? 'groq' : cliente ? 'claude' : 'local' });
+    if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: iaActiva() });
     if (url === '/andon.json') return enviar(req, res, 200, 'application/json', Buffer.from(JSON.stringify(D.registros)), D.json, { 'Cache-Control': 'no-cache' });
     const a = archivo(url);
     if (!a && !path.extname(url)) {  // /estacion/x sin diagonal final -> /estacion/x/
@@ -376,5 +454,5 @@ const servidor = http.createServer(async (req, res) => {
   }
 });
 if (require.main === module) servidor.listen(process.env.PORT || 10000, () =>
-  console.log(`Mantenimiento en :${process.env.PORT || 10000} · ${D.registros.length} reportes · chatbot ${process.env.GROQ_API_KEY ? 'Groq ' + GROQ_MODELOS[0] : cliente ? MODELO : 'local (sin GROQ_API_KEY ni ANTHROPIC_API_KEY)'}`));
-module.exports = { herramientas };  // para test_build.py
+  console.log(`Mantenimiento en :${process.env.PORT || 10000} · ${D.registros.length} reportes · chatbot ${iaActiva()}`));
+module.exports = { herramientas, cifrasSinFuente, estado, chatCompatible, PROVEEDORES };  // para test_build.py

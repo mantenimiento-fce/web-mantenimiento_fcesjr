@@ -7,7 +7,9 @@ services:
     healthCheckPath: /salud
     autoDeploy: true      # cada push a main regenera el sitio desde los Excel
     envVars:
-      - key: GROQ_API_KEY        # chatbot gratis (Groq, gpt-oss; GROQ_MODELOS para cambiar modelos); sin ella responde el buscador local
+      - key: GEMINI_API_KEY      # chatbot principal gratis (Google AI Studio; GEMINI_MODELOS para cambiar modelos)
+        sync: false
+      - key: GROQ_API_KEY        # respaldo gratis (Groq, gpt-oss); sin ninguna clave responde el buscador local
         sync: false
       - key: ANTHROPIC_API_KEY   # opcional: Claude Haiku (de pago) si no hay GROQ_API_KEY o Groq falla
         sync: false

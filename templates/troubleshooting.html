@@ -9,10 +9,7 @@
 {% block head %}
 <style>
   .ts { max-width: 880px; }
-  .ts-filtro { padding: var(--sp-4); }
-  .ts-filtro label { display: block; margin-bottom: var(--sp-2); font: 700 var(--fs-lg)/var(--lh-tight) var(--font-display); color: var(--c-ink); }
-  .ts-filtro [role="status"] { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--c-muted); }
-  .ts-vacio { display: flex; gap: var(--sp-3); margin-top: var(--sp-5); padding: var(--sp-4); color: var(--c-muted); }
+  .ts > .consulta { margin-bottom: var(--sp-6); }
 
   .efecto { margin-bottom: var(--sp-3); overflow: hidden; }
   .efecto:target { box-shadow: 0 0 0 3px var(--c-amber); }
@@ -38,12 +35,7 @@
 {% endblock %}
 {% block content %}
 <div class="wrap ts">
-  <div class="panel ts-filtro">
-    <label for="ts-q">Buscar efecto o causa</label>
-    <div class="input-wrap">{{ icono("search") }}
-      <input class="input" id="ts-q" type="search" autocomplete="off" placeholder="Ej. no enciende, timeout, sensor"></div>
-    <p role="status" id="ts-cuenta">{{ m.efectos|length }} efectos</p>
-  </div>
+  {% with raiz="../../../", estacion=m.slug, nombre=m.info.equipo, modo="troubleshooting" %}{% include "_consulta.html" %}{% endwith %}
 
   {% set n = namespace(i=0) %}
   {# categorías en el orden en que aparecen (el Excel va EQUIPO, PROCESO, MATERIAL) #}
@@ -66,26 +58,8 @@
     {% endfor %}
   </section>
   {% endfor %}
-
-  <p class="panel ts-vacio" id="ts-vacio" hidden>{{ icono("search") }}<span>Ningún efecto ni causa coincide con la búsqueda. Pruebe con otra palabra o con parte del código de error.</span></p>
 </div>
 <script>
-  // filtro: muestra los efectos cuyo texto o causas contienen todas las palabras (sin acentos ni mayúsculas)
-  const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const efectos = [...document.querySelectorAll('.efecto')].map(d => ({ d, t: norm(d.textContent) }));
-  const caja = document.getElementById('ts-q'), cuenta = document.getElementById('ts-cuenta');
-  caja.addEventListener('input', () => {
-    const palabras = norm(caja.value).split(/\s+/).filter(Boolean);
-    let n = 0;
-    for (const { d, t } of efectos) {
-      const ok = palabras.every(p => t.includes(p));
-      d.hidden = !ok; n += ok;
-      if (palabras.length) d.open = ok;
-    }
-    document.querySelectorAll('.ts-cat').forEach(s => s.hidden = !s.querySelector('.efecto:not([hidden])'));
-    document.getElementById('ts-vacio').hidden = n > 0;
-    cuenta.textContent = palabras.length ? `${n} de ${efectos.length} efectos coinciden` : `${efectos.length} efectos`;
-  });
   // enlace directo a un efecto (#efecto-5): abrirlo
   const destino = location.hash && document.querySelector(location.hash + '.efecto');
   if (destino) destino.open = true;

@@ -6,3 +6,4 @@ _respaldo_matrices
 .github
 **/~$*
 *.md
+.env

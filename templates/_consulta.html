@@ -5,9 +5,10 @@
   <h2 class="consulta-label" id="consulta-t">{% if nombre %}Asistente · {{ nombre }}{% else %}Asistente de mantenimiento{% endif %}</h2>
   <div class="chat-log" id="consulta-res" aria-live="polite">
     <div class="chat-msg chat-bot">
-      <p>Pregunte lo que necesite sobre {% if nombre %}esta estación{% else %}las estaciones o los indicadores{% endif %}. Por ejemplo:</p>
+      <p>{% if modo == "troubleshooting" %}Describa la falla o el mensaje de error y le digo qué revisar{% else %}Pregunte lo que necesite sobre {% if nombre %}esta estación{% else %}las estaciones o los indicadores{% endif %}{% endif %}. Por ejemplo:</p>
       <div class="chat-ejemplos">
-        {% if modo == "estacion" %}<button type="button">¿Cada cuándo se lubrican los carros?</button><button type="button">El radio no enciende, ¿qué reviso?</button><button type="button">¿Qué herramientas necesito para el preventivo?</button>
+        {% if modo == "troubleshooting" %}<button type="button">El radio no enciende, ¿qué reviso?</button><button type="button">La aplicación se congeló</button><button type="button">¿Cuáles son las fallas más frecuentes?</button>
+        {% elif modo == "estacion" %}<button type="button">¿Cada cuándo se lubrican los carros?</button><button type="button">El radio no enciende, ¿qué reviso?</button><button type="button">¿Qué herramientas necesito para el preventivo?</button>
         {% else %}<button type="button">MTTR de octubre en Honda 25SA</button><button type="button">Gráfica del BDR por mes de este año</button><button type="button">Máquinas con más fallas el mes pasado</button>{% endif %}
       </div>
     </div>
@@ -18,5 +19,5 @@
     <button class="btn btn-primary btn-icon" type="submit" aria-label="Enviar" title="Enviar">{{ icono("send") }}</button>
   </form>
 </section>
-{% if modo != "estacion" %}<script src="{{ raiz }}andon.js" defer></script>{% endif %}
+{% if modo == "general" %}<script src="{{ raiz }}andon.js" defer></script>{% endif %}
 <script src="{{ raiz }}asistente.js" defer></script>

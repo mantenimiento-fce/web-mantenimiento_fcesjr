@@ -39,6 +39,8 @@ for m in machines:
     assert m["efectos"], m["slug"]
     page = (OUT / "estacion" / m["slug"] / "troubleshooting" / "index.html").read_text(encoding="utf-8")
     assert page.count('class="panel efecto"') == len(m["efectos"]), m["slug"]
+    assert 'id="consulta-form"' in page and 'id="ts-q"' not in page, m["slug"]  # chat en lugar del buscador
+    assert not any(re.match(r"TOP ([6-9]|10)\b", e["efecto"]) for e in m["efectos"]), m["slug"]
     assert 'href="troubleshooting/"' in (OUT / "estacion" / m["slug"] / "index.html").read_text(encoding="utf-8")
     # la consulta enlaza a #efecto-n: el n-ésimo efecto de la página debe ser el mismo
     en_pagina = [html.unescape(t) for t in re.findall(r'class="efecto-t"><b>(.*?)</b>', page)]
@@ -117,7 +119,7 @@ print(f"OK consulta: {len(CASOS)} preguntas")
 # servidor (server.js): sitio, andon.json, chat sin API key (buscador local), publicar con clave, sin salir de _site
 import shutil, tempfile, time, urllib.request, urllib.error
 datos = tempfile.mkdtemp()
-env = {**os.environ, "PORT": "10987", "DATA_DIR": datos, "ANDON_CLAVE": "x1", "ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""}
+env = {**os.environ, "PORT": "10987", "DATA_DIR": datos, "ANDON_CLAVE": "x1", "ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": "", "GEMINI_API_KEY": "", "GROQ_API_KEY": ""}
 srv = subprocess.Popen(["node", "server.js"], cwd=BASE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 try:
     def pedir(ruta, cuerpo=None, h={}):
@@ -150,16 +152,27 @@ finally:
 print("OK servidor")
 
 # herramientas del chatbot (las mismas que usa Groq/Claude), sin llamar a ninguna API
-js = """const {herramientas}=require('./server.js');const assert=require('assert');const g=[];
+js = """const {herramientas,cifrasSinFuente,estado}=require('./server.js');const assert=require('assert');const g=[];
 const t=Object.fromEntries(herramientas(g,true).map(x=>[x.name,x]));
 (async()=>{
 assert(JSON.parse(await t.buscar_hpm.run({pregunta:'cada cuando se lubrican los carros',estacion:'display-tester-station'})).pasos.some(p=>p.paso==='27'));
 assert(/Switch principal apagado/.test(await t.troubleshooting.run({estacion:'flashing-station',efecto:'no enciende'})));
 assert.strictEqual(JSON.parse(await t.kpi_resumen.run({anio:'2026',mes_desde:'3',mes_hasta:'5'})).periodo,'Marzo–Mayo 2026');
 await t.graficar_kpi.run({kpi:'bdr',por:'linea',anio:2026,mes_desde:10,mes_hasta:10});assert(g.length===1&&g[0].horizontal);
-assert.strictEqual(herramientas([],false).length,4);console.log('ok');})().catch(e=>{console.error(e);process.exit(1)});"""
+// siempre barras, aunque el modelo pida otra cosa; por mes solo meses con registros y valores iguales al modelo de KPIs
+await t.graficar_kpi.run({kpi:'fallas',por:'mes',anio:2026,linea:'Stellantis',tipo:'dispersion'});
+const A=require('./templates/andon.js'),M=A.crearModelo(require('./_site/andon.json'),require('./_site/lineas.json'));
+assert(g.every(x=>x.tipo==='bar'));assert.deepStrictEqual(g[1].etiquetas,['Abr','May','Jun','Jul','Ago','Sep']);
+assert.deepStrictEqual(g[1].datos,[4,5,6,7,8,9].map(m=>M.calcular({anio:2026,mes:m,linea:'Stellantis'}).fallas));
+assert.strictEqual(herramientas([],false).length,4);
+// cifras: con o sin separador de miles pasan; inventadas o redondeadas no; enteros chicos (pasos, días) se ignoran
+assert.deepStrictEqual(cifrasSinFuente('BDR 15.42 %, 3,023 fallas, paso 27',['{"bdr_pct":15.42,"fallas":3023}']),[]);
+assert.deepStrictEqual(cifrasSinFuente('MTTR aprox. 1980 min y 99.5 h',['{"mttr_min":1980.3}']),[1980,99.5]);
+// el prompt trae la tabla de KPIs y la interpretación del periodo/línea, sin tocar el mensaje
+const e=estado('','grafica el mttr de honda en octubre');assert(/KPIs YA CALCULADOS/.test(e)&&/Octubre 2026/.test(e)&&/Honda 25SA/.test(e));
+assert(!/INTERPRETACIÓN/.test(estado('','cada cuando se lubrican los carros')));console.log('ok');})().catch(e=>{console.error(e);process.exit(1)});"""
 h = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", cwd=BASE,
-                   env={**os.environ, "DATA_DIR": tempfile.mkdtemp()})
+                   env={**os.environ, "DATA_DIR": tempfile.mkdtemp(), "GEMINI_API_KEY": "", "GROQ_API_KEY": ""})
 assert h.stdout.strip() == "ok", h.stderr
 print("OK herramientas del chatbot")
 print("Todo OK")

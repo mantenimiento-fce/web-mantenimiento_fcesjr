@@ -160,8 +160,20 @@
     const lineaEn = q => alias.map(a => ({ a, s: (a.completo && q.includes(a.n) ? 1e9 : 0) + (cuantos.get(a.l) || 0),
       ok: q.includes(a.n) || a.propios.some(t => new RegExp(`\\b${t}\\b`).test(q)) })).filter(x => x.ok).sort((x, y) => y.s - x.s)[0]?.a.l || null;
 
-    return function responder(consulta) {
-      const q = norm(consulta).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+    const limpiar = consulta => norm(consulta).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+    // periodo: mes y año nombrados; "este año" = año completo; sin periodo = mes más reciente. También lo usa server.js
+    function entender(consulta) {
+      const q = limpiar(consulta), anioQ = /\b(20\d\d)\b/.exec(q);
+      let mes = MES_RE.findIndex(re => re.test(q)) + 1 || null;
+      let anio = anioQ ? +anioQ[1] : uA;
+      if (mes && !anioQ && (anio > uA || (anio === uA && mes > uM))) anio--;
+      if (/mes pasado|mes anterior/.test(q)) { mes = uM === 1 ? 12 : uM - 1; anio = uM === 1 ? uA - 1 : uA; }
+      else if (!mes && !anioQ && !/\b(ano|anual|acumulado)\b/.test(q)) mes = uM;
+      return { anio, mes, linea: lineaEn(q) };
+    }
+
+    function responder(consulta) {
+      const q = limpiar(consulta);
       if (!q) return null;
       const def = /que (es|son|significa)|definicion|como se calcula|formula/.test(q) && /\b(bdr|mttr|mtbf)\b/.exec(q);
       if (def) return { texto: {
@@ -170,15 +182,7 @@
         mtbf: 'MTBF (Mean Time Between Failures): tiempo promedio que el equipo opera entre una falla y la siguiente. MTBF (h) = (tiempo disponible − tiempo de reparación) ÷ número de fallas ÷ 60.'
       }[def[1]] };
 
-      // periodo: mes y año nombrados; "este año" = año completo; sin periodo = mes más reciente
-      const anioQ = /\b(20\d\d)\b/.exec(q);
-      let mes = MES_RE.findIndex(re => re.test(q)) + 1 || null;
-      let anio = anioQ ? +anioQ[1] : uA;
-      if (mes && !anioQ && (anio > uA || (anio === uA && mes > uM))) anio--;
-      if (/mes pasado|mes anterior/.test(q)) { mes = uM === 1 ? 12 : uM - 1; anio = uM === 1 ? uA - 1 : uA; }
-      else if (!mes && !anioQ && !/\b(ano|anual|acumulado)\b/.test(q)) mes = uM;
-      const linea = lineaEn(q);
-      const f = { anio, mes, linea };
+      const f = entender(consulta), { anio, mes, linea } = f;
       const periodo = `${mes ? MESES[mes - 1] + ' ' : ''}${anio}`;
       const donde = `${periodo}${linea ? ' · ' + linea : ''}`;
       const k = M.calcular(f);
@@ -205,7 +209,8 @@
       const valores = [[`${ent(k.fallas)} fallas · ${ent(k.paro)} min de downtime`]];
       valores.push([`Espera del técnico ${ent(k.loc)} min`]);
       return { texto: `${donde}: ${(pedidos.length ? pedidos : ['bdr', 'mttr', 'mtbf']).map(x => partes[x]).join(' · ')}.`, valores };
-    };
+    }
+    return Object.assign(responder, { entender });
   }
 
   // datos publicados + los subidos en este navegador que aún no se publican
