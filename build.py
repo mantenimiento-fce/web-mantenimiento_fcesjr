@@ -403,20 +403,23 @@ def load_lineas():
     """Tiempo disponible mensual (min) de la hoja Datos Maestros Actual: planta (sin SMD) y por línea de ANDON."""
     xlsx = next(p for p in sorted(KPI_DIR.glob("KPI*.xlsx")) if not p.name.startswith("~$"))
     ws = openpyxl.load_workbook(xlsx, data_only=True)["Datos Maestros Actual"]
-    maestro, filas = {}, ws.iter_rows(min_col=2, max_col=5, values_only=True)
+    maestro, mes, filas = {}, {}, ws.iter_rows(min_col=2, max_col=11, values_only=True)
     for nombre, *_ in filas:  # hasta el encabezado "Linea de Producción"
         if txt(nombre).lower().startswith("linea de produc"):
             break
-    for nombre, *_, minutos in filas:
+    for nombre, _, _, minutos, *_, k in filas:  # E = tiempo disponible mensual, K = MES
         if not txt(nombre):
             break
+        mes[txt(nombre)] = k
         if isinstance(minutos, (int, float)) and not txt(nombre).upper().startswith("SMD"):
             maestro[txt(nombre)] = minutos
     faltan = {m for ms in LINEAS_ANDON.values() for m in ms} - set(maestro)
     assert not faltan, f"líneas de LINEAS_ANDON que ya no están en Datos Maestros: {faltan}"
-    return {"origen": xlsx.name, "planta": sum(maestro.values()),
-            "lineas": {a: sum(maestro[m] for m in ms) for a, ms in LINEAS_ANDON.items()},
-            "maestro": {a: " + ".join(ms) for a, ms in LINEAS_ANDON.items()}}
+    lineas = {a: sum(maestro[m] for m in ms) for a, ms in LINEAS_ANDON.items()}
+    lineas["Ford U625"] = mes["Ford U625"]  # definido por Mantenimiento: U625 usa la columna MES (K7), no E
+    return {"origen": xlsx.name, "planta": sum(maestro.values()), "lineas": lineas,
+            "smd": mes["SMD 13 LINES"] / 13,  # cada línea SMD de ANDON = K32 / 13
+            "maestro": {**{a: " + ".join(ms) for a, ms in LINEAS_ANDON.items()}, "Ford U625": "Ford U625 (MES)"}}
 
 
 def qr_svg(url):

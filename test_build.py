@@ -58,17 +58,27 @@ const A=require('./templates/andon.js'),fs=require('fs'),assert=require('assert'
 const regs=JSON.parse(fs.readFileSync('_site/andon.json','utf8')),lineas=JSON.parse(fs.readFileSync('_site/lineas.json','utf8'));
 const M=A.crearModelo(regs,lineas),k=M.calcular({anio:2026,mes:10});
 assert.strictEqual(regs.length,4814);assert.strictEqual(regs.filter(r=>r.ini.startsWith('2026-01')).length,267);
-const vale=r=>r.int==='Si'&&r.lin!=='N/A'&&r.maq!=='N/A'&&r.sol!=='ADMINISTRADOR DEL SISTEMA';
+const vale=r=>r.int==='Si'&&r.lin!=='N/A'&&r.maq!=='N/A'&&r.lin!=='LINEA PRUEBA'&&r.sol!=='ADMINISTRADOR DEL SISTEMA',planta=r=>vale(r)&&!/^SMD/.test(r.lin);
 assert(regs.every(r=>'sol' in r));
-assert.strictEqual(M.calcular({anio:2026,mes:1}).fallas,regs.filter(r=>vale(r)&&r.ini.startsWith('2026-01')).length);
-assert.strictEqual(M.calcular({anio:2026}).fallas,regs.filter(vale).length);
+assert.strictEqual(M.calcular({anio:2026,mes:1}).fallas,regs.filter(r=>planta(r)&&r.ini.startsWith('2026-01')).length);
+const ka=M.calcular({anio:2026});assert.deepStrictEqual([ka.fallas,ka.loading],[regs.filter(r=>planta(r)&&r.ini.startsWith('2026')).length,lineas.planta*12]);
+assert(regs.some(r=>r.lin==='LINEA PRUEBA')&&!M.lineasConDatos.includes('LINEA PRUEBA'));
+assert.strictEqual(lineas.lineas['Ford U625'],30960);assert.strictEqual(lineas.smd,569088/13);
+assert.strictEqual(M.calcular({anio:2026,mes:10,linea:'SMD14'}).loading,569088/13);assert(M.grupos({anio:2026,mes:10},'lin').some(x=>/^SMD/.test(x.nombre)));
 assert(!A.cuenta({int:'Si',lin:'N/A',maq:'x',sol:'y'})&&!A.cuenta({int:'Si',lin:'x',maq:'N/A',sol:'y'})&&!A.cuenta({int:'Si',lin:'x',maq:'y',sol:'ADMINISTRADOR DEL SISTEMA'})&&!A.cuenta({int:'No',lin:'x',maq:'y',sol:'z'})&&A.cuenta({int:'Si',lin:'x',maq:'y',sol:'z'}));
-const oct=regs.filter(r=>r.ini.startsWith('2026-10')&&vale(r)),seg=oct.reduce((s,r)=>s+r.rep,0);
+const oct=regs.filter(r=>r.ini.startsWith('2026-10')&&planta(r)),seg=oct.reduce((s,r)=>s+r.rep,0);
 assert.deepStrictEqual([k.fallas,k.paro,k.loading],[oct.length,seg/60,lineas.planta]);
 assert.strictEqual(k.mttr,seg/60/oct.length);assert.strictEqual(k.mtbf,(lineas.planta-seg/60)/oct.length/60);
 const kl=M.calcular({anio:2026,mes:10,linea:'Honda 25SA'});assert.strictEqual(kl.bdr,kl.paro/lineas.lineas['Honda 25SA']*100);
-const maq=oct[0].maq;
-assert.strictEqual(M.calcular({anio:2026,mes:10,maq}).fallas,oct.filter(r=>r.maq===maq).length);
+const maq=oct[0].maq,nq=oct.filter(r=>r.maq===maq).length;
+assert.strictEqual(M.calcular({anio:2026,mes:10,maq}).fallas,nq>1?nq:0);
+// un solo reporte en el mes = sin registros (Stellantis: 1 en mar, oct y nov)
+const st=m=>regs.filter(r=>vale(r)&&r.lin==='Stellantis'&&r.ini.startsWith(m));
+assert.strictEqual(st('2026-11').length,1);
+const sn=M.calcular({anio:2026,mes:11,linea:'Stellantis'});assert.deepStrictEqual([sn.fallas,sn.bdr,sn.mttr,sn.mtbf],[0,null,null,null]);
+const sa=M.calcular({anio:2026,linea:'Stellantis'}),mv=[4,5,6,7,8,9];
+assert.strictEqual(sa.fallas,mv.reduce((s,m)=>s+st('2026-0'+m).length,0));assert.strictEqual(sa.loading,lineas.lineas.Stellantis*12);
+assert(!M.grupos({anio:2026,mes:11},'lin').some(x=>x.nombre==='Stellantis'));
 // combinar: nada se pierde, lo más avanzado gana, lo viejo no pisa lo nuevo
 const a={id:1,est:10,tot:60},b={id:1,est:100,tot:90},c={id:2,est:100,tot:5};
 let r=A.combinar([b],[a,c]);assert.deepStrictEqual([r.registros,r.agregados,r.actualizados,r.iguales],[[b,c],1,0,1]);
@@ -80,7 +90,7 @@ assert.deepStrictEqual(A.leerCsv(csv),[{id:7,ini:'2026-01-05 09:50',turno:'Turno
 assert.throws(()=>A.leerCsv('a,b\n1,2'),/Número/);
 const q=A.crearConsulta(regs,lineas);
 assert(A.esKpi('cual es el mttr de octubre') && !A.esKpi('cada cuando se lubrican los carros'));
-assert(/^Octubre 2026: MTTR 39.6 min/.test(q('cual es el mttr de octubre').texto), q('cual es el mttr de octubre').texto);
+assert(/^Octubre 2026: MTTR 34.5 min/.test(q('cual es el mttr de octubre').texto), q('cual es el mttr de octubre').texto);
 assert(/Honda 25SA/.test(q('bdr de honda en octubre').texto));
 assert(/Máquinas/.test(q('maquinas con mas fallas en octubre').texto));
 console.log('ok');

@@ -1,6 +1,7 @@
 // Indicadores de mantenimiento (BDR, MTTR, MTBF) desde la exportación "Reportes de mantenimiento" de ANDON.
 // Solo cuentan los reportes con "Genero interrupcion?" = Si, con línea y máquina (no "N/A") y que no pidió
-// "ADMINISTRADOR DEL SISTEMA"; cada uno es una falla. Downtime (breakdown time) =
+// "ADMINISTRADOR DEL SISTEMA" y fuera de LINEA PRUEBA; cada uno es una falla. Un mes con un solo reporte (planta, línea o máquina)
+// cuenta como sin registros. El loading es constante por mes (Datos Maestros) y el año suma los 12 meses. Downtime (breakdown time) =
 // "Tiempo de reparacion (segundos)"; espera = "Tiempo de localización"; la fecha es "Inicio de la falla" (día/mes/año). El tiempo disponible (loading)
 // es fijo por línea y mes, de la hoja Datos Maestros Actual del Excel (lineas.json, lo genera build.py).
 // Unidades: downtime, espera, loading y MTTR en minutos; MTBF en horas; BDR en %.
@@ -84,42 +85,51 @@
   }
 
   const NA = /^(n\/?a|)$/i;
-  const cuenta = r => r.int === 'Si' && !NA.test(r.lin) && !NA.test(r.maq) && r.sol !== 'ADMINISTRADOR DEL SISTEMA';
+  const SMD = /^SMD/i;
+  const cuenta = r => r.int === 'Si' && !NA.test(r.lin) && !NA.test(r.maq) && r.lin !== 'LINEA PRUEBA' && r.sol !== 'ADMINISTRADOR DEL SISTEMA';
   const mesDe = r => +r.ini.slice(5, 7), anioDe = r => +r.ini.slice(0, 4);
 
   function crearModelo(todos, lineas) {
     const registros = todos.filter(cuenta);
     const ultima = registros.reduce((a, r) => r.ini > a ? r.ini : a, '');
     const anios = [...new Set(registros.map(anioDe))].sort();
-    const conDatos = new Set(registros.map(r => r.ini.slice(0, 7)));  // "2026-01"
-    const hayDatos = (a, m) => conDatos.has(`${a}-${String(m).padStart(2, '0')}`);
-
-    // loading fijo por mes (min); el año (o el rango desde-hasta) suma solo los meses con reportes
     const enRango = (m, { mes, desde, hasta }) => mes ? m === mes : (!desde || m >= desde) && (!hasta || m <= hasta);
-    function loading(f, linea) {
-      const porMes = linea ? lineas.lineas[linea] : lineas.planta;
-      if (!porMes) return null;
-      return porMes * MESES.filter((_, i) => enRango(i + 1, f) && hayDatos(f.anio, i + 1)).length;
-    }
 
-    const filtrar = f => registros.filter(r => anioDe(r) === f.anio && enRango(mesDe(r), f)
-      && (!f.linea || r.lin === f.linea) && (!f.maq || r.maq === f.maq));
+    // un mes con un solo reporte (de la planta, línea o máquina elegida) no alcanza para KPI: cuenta como sin registros.
+    // La planta no incluye SMD (su loading de Datos Maestros tampoco); las SMD se ven eligiendo su línea.
+    function filtrar(f) {
+      const regs = registros.filter(r => anioDe(r) === f.anio && (f.linea ? r.lin === f.linea : f.maq || !SMD.test(r.lin))
+        && (!f.maq || r.maq === f.maq)), n = {};
+      for (const r of regs) n[mesDe(r)] = (n[mesDe(r)] || 0) + 1;
+      const meses = MESES.map((_, i) => i + 1).filter(m => n[m] > 1 && enRango(m, f));
+      return { regs: regs.filter(r => meses.includes(mesDe(r))), meses };
+    }
+    const hayDatos = (anio, mes) => filtrar({ anio, mes }).meses.length > 0;
+
+    // loading: dato maestro constante por mes (min); el año suma los 12 meses, un rango suma sus meses
+    function loading(f, linea) {
+      const porMes = !linea ? lineas.planta : SMD.test(linea) ? lineas.smd : lineas.lineas[linea];
+      return porMes ? porMes * (f.mes ? 1 : (f.hasta || 12) - (f.desde || 1) + 1) : null;
+    }
 
     function kpis(regs, L) {
       const n = regs.length, suma = k => regs.reduce((s, r) => s + r[k], 0) / 60;  // segundos -> min
       const paro = suma('rep');  // breakdown time: solo el tiempo de reparación
       return { fallas: n, paro, loc: suma('loc'), rep: suma('rep'), loading: L,
-               bdr: L ? paro / L * 100 : null, mttr: n ? paro / n : null, mtbf: L && n ? (L - paro) / n / 60 : null };
+               bdr: L && n ? paro / L * 100 : null, mttr: n ? paro / n : null, mtbf: L && n ? (L - paro) / n / 60 : null };
     }
-    const calcular = f => kpis(filtrar(f), loading(f, f.linea));
-    const serie = (anio, linea, maq) => MESES.map((_, i) => ({ mes: i + 1, ...calcular({ anio, mes: i + 1, linea, maq }), conDatos: hayDatos(anio, i + 1) }));
+    const calcular = f => kpis(filtrar(f).regs, loading(f, f.linea));
+    const serie = (anio, linea, maq) => MESES.map((_, i) => { const k = calcular({ anio, mes: i + 1, linea, maq }); return { mes: i + 1, ...k, conDatos: k.fallas > 0 }; });
 
-    // por línea, máquina, falla o turno; ordenado por tiempo de paro
+    // por línea, máquina, falla o turno; ordenado por tiempo de paro. Línea y máquina aplican su propia regla de 1 reporte.
     function grupos(f, campo) {
+      if (campo === 'lin')  // todas las líneas, SMD incluidas
+        return lineasConDatos.map(l => ({ nombre: l, lin: l, ...calcular({ ...f, linea: l }) })).filter(x => x.fallas).sort((a, b) => b.paro - a.paro);
       const g = new Map();
-      for (const r of filtrar(f)) { const k = r[campo] || 'Sin dato'; (g.get(k) || g.set(k, []).get(k)).push(r); }
+      for (const r of filtrar(f).regs) { const k = r[campo] || 'Sin dato'; (g.get(k) || g.set(k, []).get(k)).push(r); }
       return [...g].map(([nombre, regs]) => ({ nombre, lin: regs[0].lin,
-        ...kpis(regs, campo === 'lin' ? loading(f, nombre) : null) })).sort((a, b) => b.paro - a.paro);
+        ...(campo === 'maq' ? calcular({ ...f, maq: nombre }) : kpis(regs, null)) }))
+        .filter(x => x.fallas).sort((a, b) => b.paro - a.paro);
     }
     const orden = l => [...new Set(l)].sort((a, b) => a.localeCompare(b));
     const lineasConDatos = orden(registros.map(r => r.lin));

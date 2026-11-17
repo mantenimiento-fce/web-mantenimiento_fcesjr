@@ -150,6 +150,7 @@
         <p class="sub muted" style="font-size: var(--fs-xs)">{{ lineas.origen }} · hoja Datos Maestros Actual · min/mes</p>
         <div class="tabla-wrap"><table><thead><tr><th>Línea ANDON</th><th>Datos Maestros</th><th>Min/mes</th></tr></thead><tbody>
           {% for l, v in lineas.lineas.items() %}<tr><td>{{ l }}</td><td>{{ lineas.maestro[l] }}</td><td>{{ "{:,.0f}".format(v) }}</td></tr>{% endfor %}
+          <tr><td>Cada línea SMD</td><td>SMD 13 LINES (MES) ÷ 13</td><td>{{ "{:,.0f}".format(lineas.smd) }}</td></tr>
           <tr><th>Planta (sin SMD)</th><td></td><th>{{ "{:,.0f}".format(lineas.planta) }}</th></tr>
         </tbody></table></div>
       </details>
