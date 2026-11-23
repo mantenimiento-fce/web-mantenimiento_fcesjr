@@ -86,7 +86,7 @@ Node (`server.js`, con gzip y caché larga para las fotos). No hace falta Docker
 
 1. Subir esta carpeta a GitHub (rama `main`).
 2. En Render: **New + → Blueprint** y elegir el repositorio (usa `render.yaml`). O **New + → Web Service → Docker**.
-3. Capturar las variables: `GROQ_API_KEY` (gratis, console.groq.com) u opcionalmente `ANTHROPIC_API_KEY`, `ANDON_CLAVE`, y opcionalmente
+3. Capturar las variables: `ADMIN_CLAVE`, `GROQ_API_KEY` (gratis, console.groq.com) u opcionalmente `ANTHROPIC_API_KEY`, `ANDON_CLAVE`, y opcionalmente
    `GITHUB_TOKEN` (fine-grained, solo este repo, *Contents: Read and write*) + `GITHUB_REPO` (`usuario/repo`).
 4. Cada push a `main` (por ejemplo, al actualizar un Excel) reconstruye y publica. Abrir `https://<servicio>.onrender.com/qr/`
    e imprimir los QR (la URL sale de `RENDER_EXTERNAL_URL`; para un dominio propio, definir `BASE_URL`).
@@ -114,3 +114,14 @@ servidor (requiere Node). GitHub Actions lo corre en cada push (`.github/workflo
 ## Agregar o cambiar estaciones
 
 Copiar el Excel (mismo formato HPM) a `HPM/` y hacer push. El nombre de la ruta sale de la celda EQUIPO (K6).
+
+**Administrador (`/admin/`)**: se abre escribiendo la ruta (ninguna página la enlaza). Permite crear estaciones y, en cada
+una, agregar, editar o eliminar secciones y puntos del HPM, y efectos y causas del troubleshooting. *Guardar cambios* pide
+`ADMIN_CLAVE` (o `ANDON_CLAVE` si no existe) y guarda en `estaciones_admin.json` del repositorio (requiere `GITHUB_TOKEN` +
+`GITHUB_REPO`); ese commit hace que Render reconstruya el sitio, así que las páginas, el asistente y los **códigos QR** de
+estaciones nuevas aparecen solos en unos minutos. `build.py` aplica ese archivo encima de los Excel: una estación editada
+en el admin ya no toma del Excel la parte editada (HPM o troubleshooting); las imágenes del Excel siguen saliendo por N° de
+punto. Al renombrar una estación su ruta (y su QR) no cambia. En local lo guardado queda en `data/estaciones_admin.json`
+y se ve al correr `py build.py`.
+
+En `/qr/` se marcan los códigos a imprimir (*Todos* / *Ninguno*); solo se imprimen los marcados.

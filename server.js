@@ -5,6 +5,7 @@
 //   ANTHROPIC_API_KEY  chatbot con Claude Haiku (si no hay Groq); sin ninguna responde el buscador local (asistente.js / andon.js)
 //   DATA_DIR           carpeta donde se guarda andon.json publicado (en Render: disco persistente montado aquí)
 //   ANDON_CLAVE        si existe, publicar pide esta clave
+//   ADMIN_CLAVE        clave para guardar desde /admin/ (si no existe se usa ANDON_CLAVE)
 //   GITHUB_TOKEN + GITHUB_REPO  además guarda andon.json en el repositorio (sobrevive a redeploys sin disco)
 const http = require('http');
 const fs = require('fs');
@@ -129,6 +130,61 @@ async function publicar(req, res) {
   let github = false, aviso = null;
   try { github = await guardarEnGithub(pendientes); } catch (e) { aviso = `Guardado en el servidor, pero no en GitHub (${e.message}).`; }
   json(req, res, 200, { ok: true, total: registros.length, github, aviso });
+}
+
+// ------------------------------------------------------------------ administrador (/admin/): estaciones, HPM y troubleshooting
+// Lo editado se guarda en DATA_DIR y en estaciones_admin.json del repositorio (GitHub): ese commit hace que Render
+// reconstruya el sitio (páginas, chat y QR) con build.py, que aplica las ediciones encima de los Excel.
+const ADMIN_GUARDADO = path.join(DATA_DIR, 'estaciones_admin.json');
+const CAMPOS_PASO = ['n', 'punto', 'metodo', 'norma', 'contramedida', 'hta', 'material', 'tiempo', 'frec', 'hora'];
+const leerAdmin = () => { try { return JSON.parse(fs.readFileSync(ADMIN_GUARDADO, 'utf8')); } catch { return {}; } };
+const texto = (v, max = 2000) => typeof v === 'string' ? v.trim().slice(0, max) : '';
+const arreglo = v => Array.isArray(v) ? v : [];
+function limpiarEstacion(e) {  // solo los campos que usa build.py, todo como texto
+  if (!e || typeof e !== 'object' || !texto(e.nombre, 120)) return null;
+  return { nombre: texto(e.nombre, 120),
+    secciones: arreglo(e.secciones).map(s => ({ nombre: texto(s?.nombre, 300),
+      pasos: arreglo(s?.pasos).map(p => Object.fromEntries(CAMPOS_PASO.map(k => [k, texto(p?.[k])]))) })),
+    efectos: arreglo(e.efectos).map(x => ({ efecto: texto(x?.efecto, 500), categoria: texto(x?.categoria, 100),
+      causas: arreglo(x?.causas).map(c => texto(c, 500)).filter(Boolean) })).filter(x => x.efecto) };
+}
+
+async function guardarAdminEnGithub(cambios) {
+  const { GITHUB_TOKEN: token, GITHUB_REPO: repo } = process.env;
+  if (!token || !repo) return false;
+  const url = `https://api.github.com/repos/${repo}/contents/estaciones_admin.json`;
+  const h = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'mantenimiento-web' };
+  for (let intento = 1; ; intento++) {
+    const meta = await fetch(url + '?ref=main', { headers: h });
+    if (!meta.ok && meta.status !== 404) throw new Error(`GitHub ${meta.status}`);
+    const sha = meta.ok ? (await meta.json()).sha : undefined;
+    const remoto = sha ? await (await fetch(url + '?ref=main', { headers: { ...h, Accept: 'application/vnd.github.raw+json' } })).json() : {};
+    const r = await fetch(url, { method: 'PUT', headers: h, body: JSON.stringify({
+      message: `Admin: ${Object.values(cambios).map(e => e.nombre).join(', ')} actualizado desde /admin/`,
+      content: Buffer.from(JSON.stringify({ ...remoto, ...cambios }, null, 1)).toString('base64'), branch: 'main', sha }) });
+    if (r.ok) return true;
+    if ((r.status === 409 || r.status === 422) && intento < 3) continue;
+    throw new Error(`GitHub ${r.status}`);
+  }
+}
+
+async function guardarAdmin(req, res) {
+  const clave = process.env.ADMIN_CLAVE || process.env.ANDON_CLAVE;
+  if (clave && !igual(req.headers['x-clave'], clave)) return json(req, res, 401, { error: 'Clave incorrecta.' });
+  const cuerpo = await cuerpoJson(req, 10e6);
+  const cambios = {};
+  for (const [slug, e] of Object.entries(cuerpo && typeof cuerpo === 'object' ? cuerpo : {})) {
+    const limpia = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && limpiarEstacion(e);
+    if (!limpia) return json(req, res, 400, { error: `Datos inválidos en la estación "${slug}" (falta el nombre).` });
+    cambios[slug] = limpia;
+  }
+  if (!Object.keys(cambios).length) return json(req, res, 400, { error: 'No hay cambios.' });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(ADMIN_GUARDADO + '.tmp', JSON.stringify({ ...leerAdmin(), ...cambios }));
+  fs.renameSync(ADMIN_GUARDADO + '.tmp', ADMIN_GUARDADO);
+  let github = false, aviso = null;
+  try { github = await guardarAdminEnGithub(cambios); } catch (e) { aviso = `Guardado en el servidor, pero no en GitHub (${e.message}).`; }
+  json(req, res, 200, { ok: true, github, aviso });
 }
 
 // ------------------------------------------------------------------ chatbot
@@ -437,9 +493,12 @@ const servidor = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     if (req.method === 'POST' && url === '/api/chat') return await chat(req, res);
     if (req.method === 'POST' && url === '/api/andon') return await publicar(req, res);
+    if (req.method === 'POST' && url === '/api/admin') return await guardarAdmin(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(req, res, 405, { error: 'Método no permitido' });
     if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: iaActiva() });
     if (url === '/andon.json') return enviar(req, res, 200, 'application/json', Buffer.from(JSON.stringify(D.registros)), D.json, { 'Cache-Control': 'no-cache' });
+    // lo guardado desde /admin/ antes de que el sitio se reconstruya también se ve al volver a abrir el editor
+    if (url === '/admin/datos.json') return json(req, res, 200, { ...JSON.parse(archivo(url).cuerpo), ...leerAdmin() });
     const a = archivo(url);
     if (!a && !path.extname(url)) {  // /estacion/x sin diagonal final -> /estacion/x/
       if (archivo(url + '/')) { res.writeHead(301, { Location: url + '/' }); return res.end(); }

@@ -3,7 +3,7 @@ FROM python:3.12-slim AS sitio
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY build.py ./
+COPY build.py estaciones_admin.json ./
 COPY templates templates
 COPY HPM HPM
 COPY troubleshooting troubleshooting

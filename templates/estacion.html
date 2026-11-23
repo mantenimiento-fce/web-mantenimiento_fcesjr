@@ -11,7 +11,7 @@
 <a class="btn btn-ghost btn-icon" href="../../" aria-label="Estaciones" title="Estaciones">{{ icono("arrow-left") }}</a>
 <div class="top-titulo"><h1 class="nombre-estacion">{{ m.info.equipo }}</h1><p>Mantenimiento preventivo · {{ m.total }} puntos</p></div>
 <div class="top-acciones">
-  {% if m.efectos %}<a class="btn btn-secondary" href="troubleshooting/" title="Troubleshooting">{{ icono("stethoscope") }}<span class="btn-txt">Troubleshooting</span></a>{% endif %}
+  {% if m.efectos %}<a class="btn btn-secondary" href="troubleshooting/" title="Troubleshooting">Troubleshooting</a>{% endif %}
   <button class="btn btn-secondary menu-btn" type="button" aria-controls="menu" aria-expanded="false" onclick="toggleMenu()">
     {{ icono("menu") }}<span class="btn-txt">Secciones</span></button>
 </div>
@@ -48,14 +48,13 @@
 
   .estacion { max-width: 880px; }
   .estacion > .consulta { margin-bottom: var(--sp-6); }
-  .ts-acceso { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-4);
+  .ts-acceso { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-4);
                padding: var(--sp-4); color: inherit; text-decoration: none; border-left: 4px solid var(--c-amber);
                transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease); }
   .ts-acceso:hover { background: var(--c-amber-tint); }
-  .ts-acceso > .icon:first-child { width: 28px; height: 28px; color: var(--c-amber-ink); }
   .ts-acceso b { display: block; font: 700 var(--fs-lg)/var(--lh-tight) var(--font-display); color: var(--c-ink); }
   .ts-acceso span { font-size: var(--fs-sm); color: var(--c-muted); }
-  .ts-acceso > .icon:last-child { color: var(--c-blue); transition: transform var(--dur) var(--ease); }
+  .ts-acceso > .icon { color: var(--c-blue); transition: transform var(--dur) var(--ease); }
   .ts-acceso:hover > .icon:last-child { transform: translateX(var(--sp-1)); }
 
 
@@ -116,7 +115,7 @@
 
 <div class="wrap estacion">
 {% if m.efectos %}
-<a class="panel ts-acceso" href="troubleshooting/">{{ icono("stethoscope") }}
+<a class="panel ts-acceso" href="troubleshooting/">
   <div><b>Troubleshooting</b><span>{{ m.efectos|length }} efectos de falla con sus posibles causas</span></div>{{ icono("arrow-right") }}</a>
 {% endif %}
 {% with raiz="../../", estacion=m.slug, nombre=m.info.equipo %}{% include "_consulta.html" %}{% endwith %}

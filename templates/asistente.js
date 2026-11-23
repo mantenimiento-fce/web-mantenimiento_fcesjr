@@ -330,5 +330,4 @@
   form.addEventListener('submit', e => { e.preventDefault(); preguntar(caja.value); });
   caja.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
   caja.addEventListener('input', () => { caja.style.height = ''; caja.style.height = caja.scrollHeight + 'px'; });
-  log.addEventListener('click', e => { const b = e.target.closest('.chat-ejemplos button'); if (b) preguntar(b.textContent); });
 })();

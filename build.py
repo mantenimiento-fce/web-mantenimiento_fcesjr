@@ -57,6 +57,7 @@ LINEAS_ANDON = {
     "Nissan H61P": ["Nissan H61P"], "Mitsuba": ["Mitsuba"], "AVM": ["Nissan AVM ECU"], "Nissan HJ": ["Nissan Humax"],
     "Stellantis": ["Stellantis ECU", "Stellantis Display", "Stellantis RVC"], "Rivian": ["Rivian Display", "Rivian Remoute"],
 }
+ADMIN_JSON = (BASE / "estaciones_admin.json", BASE / "data" / "estaciones_admin.json")  # lo que se edita en /admin/
 EMU = 12700  # EMU por punto: el SVG se dibuja en puntos (los navegadores no pintan letras de 139700 px)
 
 
@@ -354,15 +355,45 @@ def load_machine(path):
         if ws.title in drawings:
             figures += sheet_figures(*drawings[ws.title], theme)
 
-    # cada paso muestra las imágenes cuyas llamadas lo mencionan (ej. "13 ~ 17" -> pasos 13 a 17)
-    for s in sections:
-        for p in s["pasos"]:
-            p["figs"] = list(dict.fromkeys(f["svg"] for f in figures if p["n"].isdigit() and int(p["n"]) in f["nums"]))
+    m = {"slug": slugify(info["equipo"] or path.stem), "info": info, "archivo": path.name,
+         "secciones": sections, "leyenda": legend, "figuras": figures}
+    asignar_figuras(m)
+    return m
 
-    sections = [s for s in sections if s["pasos"]]
-    return {"slug": slugify(info["equipo"] or path.stem), "info": info, "archivo": path.name,
-            "secciones": sections, "leyenda": legend, "figuras": figures,
-            "total": sum(len(s["pasos"]) for s in sections)}
+
+def asignar_figuras(m):
+    """Cada paso muestra las imágenes cuyas llamadas lo mencionan (ej. "13 ~ 17" -> pasos 13 a 17)."""
+    m["secciones"] = [s for s in m["secciones"] if s["pasos"]]
+    for s in m["secciones"]:
+        for p in s["pasos"]:
+            p["figs"] = list(dict.fromkeys(f["svg"] for f in m["figuras"] if p["n"].isdigit() and int(p["n"]) in f["nums"]))
+    m["total"] = sum(len(s["pasos"]) for s in m["secciones"])
+
+
+def aplicar_admin(machines):
+    """Ediciones de /admin/ (ADMIN_JSON, {slug: {nombre, secciones, efectos}}) encima de los Excel; slug nuevo = estación nueva."""
+    ediciones = {}
+    for f in ADMIN_JSON:  # el del repositorio y, encima, el guardado localmente por server.js
+        if f.exists():
+            ediciones.update(json.loads(f.read_text(encoding="utf-8")))
+    por_slug = {m["slug"]: m for m in machines}
+    for slug, e in ediciones.items():
+        m = por_slug.get(slug)
+        if not m:
+            m = por_slug[slug] = {"slug": slug, "info": {k: "" for k, _ in HEADER}, "archivo": "", "secciones": [],
+                                  "leyenda": "", "figuras": [], "efectos": []}
+            machines.append(m)
+        m["info"]["equipo"] = txt(e.get("nombre")) or m["info"]["equipo"] or slug
+        if "secciones" in e:
+            m["secciones"] = [{"nombre": txt(s.get("nombre")), "id": f"s{i}",
+                               "pasos": [{k: txt(p.get(k)) for k, _ in COLS} for p in s.get("pasos", [])]}
+                              for i, s in enumerate(e["secciones"], 1)]
+        if "efectos" in e:
+            m["efectos"] = [{"efecto": txt(x.get("efecto")), "categoria": txt(x.get("categoria")),
+                             "causas": [txt(c) for c in x.get("causas", []) if txt(c)]} for x in e["efectos"] if txt(x.get("efecto"))]
+            orden = list(dict.fromkeys(x["categoria"] for x in m["efectos"]))
+            m["efectos"].sort(key=lambda x: orden.index(x["categoria"]))
+        asignar_figuras(m)
 
 
 # ---------------------------------------------------------------- troubleshooting
@@ -454,6 +485,7 @@ def build():
     efectos = load_troubleshooting()
     for m in machines:
         m["efectos"] = efectos.get(m["slug"], [])
+    aplicar_admin(machines)
 
     write("index.html", env.get_template("index.html").render(machines=machines))
     for m in machines:
@@ -464,6 +496,11 @@ def build():
         if base_url:
             write(f"qr/{m['slug']}.svg", qr_svg(m["url"]))
     write("qr/index.html", env.get_template("qr.html").render(machines=machines, base_url=base_url))
+    # /admin/: solo por ruta (ningún enlace la menciona); edita estaciones, HPM y troubleshooting
+    write("admin/index.html", env.get_template("admin.html").render())
+    write("admin/datos.json", json.dumps({m["slug"]: {"nombre": m["info"]["equipo"], "efectos": m["efectos"], "secciones": [
+        {"nombre": s["nombre"], "pasos": [{k: p[k] for k, _ in COLS} for p in s["pasos"]]} for s in m["secciones"]]}
+        for m in machines}, ensure_ascii=False))
     lineas = load_lineas()
     write("lineas.json", json.dumps(lineas, ensure_ascii=False))
     shutil.copy(ANDON_JSON, OUT / "andon.json")

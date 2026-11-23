@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% from "_iconos.html" import icono %}
+{% set raiz = "../" %}
+{# Solo se entra escribiendo /admin/: ninguna página la enlaza. Guarda en server.js /api/admin. #}
+{% block title %}Administración · Mantenimiento{% endblock %}
+{% block cabecera %}
+<div class="top-titulo"><h1>Administración</h1><p>Estaciones, HPM y troubleshooting</p></div>
+{% endblock %}
+{% block head %}
+<meta name="robots" content="noindex, nofollow">
+<style>
+  .adm { display: grid; gap: var(--sp-5); align-items: start; padding-bottom: 120px; }
+  @media (min-width: 900px) { .adm { grid-template-columns: 280px minmax(0, 1fr); }
+                              .adm-lista { position: sticky; top: calc(var(--header-h) + var(--sp-4)); } }
+  .adm-lista { padding: var(--sp-4); display: grid; gap: var(--sp-3); }
+  .adm-lista h2, .adm h2 { font-size: var(--fs-lg); }
+  .adm-lista ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-1); }
+  .est-btn { width: 100%; min-height: var(--tap); padding: var(--sp-2) var(--sp-3); text-align: left; border: 1px solid transparent;
+             border-radius: var(--r-md); background: transparent; font: inherit; color: var(--c-text); cursor: pointer; }
+  .est-btn:hover { background: var(--c-blue-tint); }
+  .est-btn[aria-current] { border-color: var(--c-blue); background: var(--c-blue-tint); }
+  .est-btn b { display: block; text-transform: uppercase; color: var(--c-ink); }
+  .est-btn small { color: var(--c-muted); }
+  .est-btn .badge { margin-top: var(--sp-1); }
+
+  .vacio { padding: var(--sp-6); text-align: center; color: var(--c-muted); }
+  .ficha { display: grid; gap: var(--sp-5); }
+  .ficha-h { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: end; }
+  .ficha-h .campo-form { flex: 1; min-width: 220px; }
+  .tabs { display: flex; gap: var(--sp-2); border-bottom: 2px solid var(--c-ink); }
+  .tabs button { min-height: var(--tap); padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md) var(--r-md) 0 0; background: transparent;
+                 font: 700 var(--fs-md)/1 var(--font-display); color: var(--c-muted); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--c-ink); color: var(--c-on-dark); }
+  .ayuda { color: var(--c-muted); font-size: var(--fs-sm); max-width: var(--measure); }
+
+  .bloque { padding: var(--sp-4); display: grid; gap: var(--sp-3); }
+  .bloque-h { display: flex; gap: var(--sp-2); align-items: end; }
+  .bloque-h .campo-form { flex: 1; }
+  .item { border: 1px solid var(--c-line); border-radius: var(--r-md); background: var(--c-paper-hi); }
+  .item summary { display: flex; align-items: center; gap: var(--sp-3); min-height: 56px; padding: var(--sp-2) var(--sp-3); cursor: pointer; list-style: none; }
+  .item summary::-webkit-details-marker { display: none; }
+  .item summary:hover { background: var(--c-blue-tint); }
+  .item summary .t { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .item summary .t small { display: block; font-weight: 400; font-size: var(--fs-xs); color: var(--c-muted); }
+  .item summary .paso-n { min-width: 36px; height: 36px; font-size: var(--fs-md); }
+  .item[open] summary { border-bottom: 1px solid var(--c-line); }
+  .item-cuerpo { display: grid; gap: var(--sp-3); padding: var(--sp-4); }
+  .campos { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  .campos .ancho { grid-column: 1 / -1; }
+  .causa { display: flex; gap: var(--sp-2); align-items: center; }
+  .causa span { min-width: 24px; text-align: right; font-weight: 700; color: var(--c-blue); }
+  .acciones { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: space-between; }
+
+  .barra { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; background: var(--c-ink); color: var(--c-on-dark); }
+  .barra .wrap { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; padding-block: var(--sp-3); }
+  .barra p { flex: 1; min-width: 200px; }
+  .barra .input { width: 180px; min-height: var(--tap); }
+  .btn-barra { color: var(--c-on-dark); }
+  .btn-barra:hover { background: var(--c-blue-hover); }
+  .msg { padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); }
+  .msg.ok { background: var(--c-success-tint); color: var(--c-success); }
+  .msg.mal { background: var(--c-danger-tint); color: var(--c-danger); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap adm">
+  <aside class="panel adm-lista" aria-labelledby="lista-t">
+    <h2 id="lista-t">Estaciones</h2>
+    <ul id="estaciones"><li class="muted">Cargando…</li></ul>
+    <button class="btn btn-secondary" type="button" id="nueva">+ Nueva estación</button>
+  </aside>
+
+  <section aria-live="polite">
+    <p class="msg" id="msg" hidden></p>
+    <p class="panel vacio" id="vacio">Elija una estación de la lista para editar su HPM o su troubleshooting.</p>
+    <div class="ficha" id="ficha" hidden>
+      <div class="ficha-h">
+        <div class="campo-form"><label for="nombre">Nombre de la estación</label><input class="input" id="nombre" maxlength="120"></div>
+        <a class="btn btn-ghost" id="ver" target="_blank" rel="noopener">Ver página publicada</a>
+      </div>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-hpm" aria-controls="panel-hpm">HPM</button>
+        <button type="button" role="tab" id="tab-ts" aria-controls="panel-ts">Troubleshooting</button>
+      </div>
+      <div id="panel-hpm" role="tabpanel" aria-labelledby="tab-hpm">
+        <p class="ayuda">Cada sección agrupa puntos de mantenimiento. Toque un punto para abrirlo y editarlo. Las imágenes del Excel se muestran en el punto con el mismo N°.</p>
+        <div id="secciones" class="ficha"></div>
+        <p><button class="btn btn-secondary" type="button" id="add-sec">+ Agregar sección</button></p>
+      </div>
+      <div id="panel-ts" role="tabpanel" aria-labelledby="tab-ts" hidden>
+        <p class="ayuda">Cada efecto es una falla que ve el técnico; debajo van sus posibles causas, en orden.</p>
+        <div id="efectos" class="ficha"></div>
+        <p><button class="btn btn-secondary" type="button" id="add-ef">+ Agregar efecto de falla</button></p>
+      </div>
+    </div>
+  </section>
+</div>
+<datalist id="categorias"></datalist>
+
+<div class="barra" id="barra" hidden><div class="wrap">
+  <p id="pendientes"></p>
+  <label class="sr-only" for="clave">Clave de administrador</label>
+  <input class="input" id="clave" type="password" placeholder="Clave" autocomplete="current-password">
+  <button class="btn btn-ghost btn-barra" type="button" id="descartar">Descartar</button>
+  <button class="btn btn-primary" type="button" id="guardar">{{ icono("check") }} Guardar cambios</button>
+</div></div>
+
+<script>
+(() => {
+  const CAMPOS = [['n', 'N°'], ['punto', 'Punto a revisar', 'ancho'], ['metodo', 'Método', 'ancho'], ['norma', 'Norma / criterio', 'ancho'],
+                  ['contramedida', 'Contramedida', 'ancho'], ['hta', 'Herramienta'], ['material', 'Material'],
+                  ['tiempo', 'Tiempo (min)'], ['frec', 'Frecuencia (semanas)'], ['hora', 'Hora ejec.']];
+  const HORAS = [['', '—'], ['ON', 'ON · equipo funcionando'], ['OFF', 'OFF · equipo parado'], ['ON/OFF', 'ON/OFF · cualquiera']];
+  let D = {}, actual = null, tab = 'hpm';
+  const cambiadas = new Set();
+  const $ = id => document.getElementById(id);
+  const el = (tag, props = {}, ...hijos) => { const e = Object.assign(document.createElement(tag), props); e.append(...hijos); return e; };
+  const slugify = s => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const boton = (texto, clase, accion) => el('button', { type: 'button', className: 'btn ' + clase, textContent: texto, onclick: accion });
+  function aviso(texto, ok) { const m = $('msg'); m.textContent = texto; m.className = 'msg ' + (ok ? 'ok' : 'mal'); m.hidden = !texto; if (texto) m.scrollIntoView({ block: 'nearest' }); }
+  function campo(etiqueta, control, clase = '') {
+    control.id ||= 'c' + Math.random().toString(36).slice(2);
+    return el('div', { className: 'campo-form ' + clase }, el('label', { htmlFor: control.id, textContent: etiqueta }), control);
+  }
+  // control enlazado a obj[k]: cada tecla marca la estación como modificada
+  function entrada(obj, k, { largo, alCambiar } = {}) {
+    const c = largo ? el('textarea', { className: 'input', rows: 2 }) : el('input', { className: 'input' });
+    c.value = obj[k] || '';
+    c.addEventListener('input', () => { obj[k] = c.value; marcar(); alCambiar?.(); });
+    return c;
+  }
+  function marcar() { cambiadas.add(actual); barra(); listaEstaciones(); }
+  function barra() {
+    $('barra').hidden = !cambiadas.size;
+    $('pendientes').textContent = `Cambios sin guardar en: ${[...cambiadas].map(s => D[s].nombre || s).join(', ')}`;
+  }
+
+  function listaEstaciones() {
+    $('estaciones').replaceChildren(...Object.entries(D).map(([slug, e]) => {
+      const pasos = e.secciones.reduce((n, s) => n + s.pasos.length, 0);
+      const b = el('button', { type: 'button', className: 'est-btn', onclick: () => abrir(slug) },
+        el('b', { textContent: e.nombre || slug }), el('small', { textContent: `${pasos} puntos HPM · ${e.efectos.length} efectos` }));
+      if (cambiadas.has(slug)) b.append(el('span', { className: 'badge', textContent: 'Sin guardar' }));
+      if (slug === actual) b.setAttribute('aria-current', 'true');
+      return el('li', {}, b);
+    }));
+    $('categorias').replaceChildren(...[...new Set(['EQUIPO', 'PROCESO', 'MATERIAL',
+      ...Object.values(D).flatMap(e => e.efectos.map(x => x.categoria))])].filter(Boolean).map(c => el('option', { value: c })));
+  }
+
+  function abrir(slug) {
+    actual = slug; aviso('');
+    const e = D[slug];
+    $('vacio').hidden = true; $('ficha').hidden = false;
+    const nombre = $('nombre'); nombre.value = e.nombre;
+    nombre.oninput = () => { e.nombre = nombre.value; marcar(); };
+    $('ver').href = `../estacion/${slug}/`;
+    listaEstaciones(); pintar();
+  }
+  function verTab(t) {
+    tab = t;
+    for (const x of ['hpm', 'ts']) { $('tab-' + x).setAttribute('aria-selected', x === t); $('panel-' + x).hidden = x !== t; }
+  }
+
+  function pintar(abrirItem) {
+    const e = D[actual];
+    $('tab-hpm').textContent = `HPM (${e.secciones.reduce((n, s) => n + s.pasos.length, 0)})`;
+    $('tab-ts').textContent = `Troubleshooting (${e.efectos.length})`;
+    verTab(tab);
+    // ---- HPM
+    $('secciones').replaceChildren(...e.secciones.map((s, si) => {
+      const pasos = s.pasos.map((p, pi) => {
+        const t = el('span', { className: 't' }), n = el('span', { className: 'paso-n' });
+        const titulo = () => { n.textContent = p.n || '?'; t.textContent = p.punto || 'Punto nuevo (sin texto)'; };
+        titulo();
+        const hora = el('select', { className: 'input' }, ...HORAS.map(([v, txt]) => el('option', { value: v, textContent: txt })));
+        hora.value = HORAS.some(h => h[0] === p.hora) ? p.hora : '';
+        hora.onchange = () => { p.hora = hora.value; marcar(); };
+        const campos = CAMPOS.map(([k, etq, clase]) => campo(etq, k === 'hora' ? hora :
+          entrada(p, k, { largo: clase === 'ancho', alCambiar: titulo }), clase));
+        const d = el('details', { className: 'item', open: abrirItem === `p${si}-${pi}` },
+          el('summary', {}, n, t),
+          el('div', { className: 'item-cuerpo' }, el('div', { className: 'campos' }, ...campos),
+            el('div', { className: 'acciones' }, el('span'), boton('Eliminar punto', 'btn-danger', () => {
+              if (confirm(`¿Eliminar el punto N° ${p.n || '?'} «${p.punto || ''}»?`)) { s.pasos.splice(pi, 1); marcar(); pintar(); }
+            }))));
+        return d;
+      });
+      return el('div', { className: 'panel bloque' },
+        el('div', { className: 'bloque-h' }, campo(`Sección ${si + 1}`, entrada(s, 'nombre')),
+          boton('Eliminar sección', 'btn-danger', () => {
+            if (confirm(`¿Eliminar la sección «${s.nombre}» y sus ${s.pasos.length} puntos?`)) { e.secciones.splice(si, 1); marcar(); pintar(); }
+          })),
+        ...pasos,
+        el('p', {}, boton('+ Agregar punto', 'btn-secondary', () => {
+          const max = Math.max(0, ...e.secciones.flatMap(x => x.pasos.map(p => parseInt(p.n) || 0)));
+          s.pasos.push({ n: String(max + 1), punto: '', metodo: '', norma: '', contramedida: '', hta: '', material: '', tiempo: '', frec: '', hora: '' });
+          marcar(); pintar(`p${si}-${s.pasos.length - 1}`); enfocar();
+        })));
+    }));
+    // ---- troubleshooting
+    $('efectos').replaceChildren(...e.efectos.map((x, xi) => {
+      const t = el('span', { className: 't' });
+      const titulo = () => { t.replaceChildren(x.efecto || 'Efecto nuevo (sin texto)', el('small', { textContent: `${x.categoria || 'Sin categoría'} · ${x.causas.length} causas` })); };
+      titulo();
+      const cat = entrada(x, 'categoria', { alCambiar: titulo }); cat.setAttribute('list', 'categorias');
+      const causas = x.causas.map((c, ci) => {
+        const i = el('input', { className: 'input', value: c, ariaLabel: `Causa ${ci + 1}` });
+        i.oninput = () => { x.causas[ci] = i.value; marcar(); };
+        return el('div', { className: 'causa' }, el('span', { textContent: ci + 1 }), i,
+          boton('Quitar', 'btn-danger', () => { x.causas.splice(ci, 1); marcar(); pintar(`e${xi}`); }));
+      });
+      return el('details', { className: 'item', open: abrirItem === `e${xi}` },
+        el('summary', {}, el('span', { className: 'paso-n', textContent: xi + 1 }), t),
+        el('div', { className: 'item-cuerpo' },
+          el('div', { className: 'campos' }, campo('Efecto (lo que ve el técnico)', entrada(x, 'efecto', { largo: true, alCambiar: titulo }), 'ancho'),
+            campo('Categoría (EQUIPO, PROCESO, MATERIAL…)', cat)),
+          el('p', { className: 'eyebrow', textContent: 'Posibles causas' }), ...causas,
+          el('div', { className: 'acciones' },
+            boton('+ Agregar causa', 'btn-secondary', () => { x.causas.push(''); marcar(); pintar(`e${xi}`); [...document.querySelectorAll('#efectos details[open] .causa input')].pop()?.focus(); }),
+            boton('Eliminar efecto', 'btn-danger', () => {
+              if (confirm(`¿Eliminar el efecto «${x.efecto}»?`)) { e.efectos.splice(xi, 1); marcar(); pintar(); }
+            }))));
+    }));
+  }
+  const enfocar = (sel = 'textarea, input') => document.querySelector(`#panel-${tab} details[open] ${sel}`)?.focus();
+
+  $('tab-hpm').onclick = () => verTab('hpm');
+  $('tab-ts').onclick = () => verTab('ts');
+  $('add-sec').onclick = () => {
+    D[actual].secciones.push({ nombre: '', pasos: [] }); marcar(); pintar();
+    [...document.querySelectorAll('#secciones .bloque-h input')].pop().focus();
+  };
+  $('add-ef').onclick = () => {
+    const e = D[actual]; e.efectos.push({ efecto: '', categoria: e.efectos.at(-1)?.categoria || 'EQUIPO', causas: [''] });
+    marcar(); pintar(`e${e.efectos.length - 1}`); enfocar();
+  };
+  $('nueva').onclick = () => {
+    const nombre = (prompt('Nombre de la nueva estación (ej. "Leak Tester Station")') || '').trim();
+    if (!nombre) return;
+    const slug = slugify(nombre);
+    if (!slug) return alert('Escriba un nombre con letras o números.');
+    if (D[slug]) return alert(`Ya existe una estación con ese nombre (${D[slug].nombre}).`);
+    D[slug] = { nombre, secciones: [{ nombre: '', pasos: [] }], efectos: [] };
+    actual = slug; marcar(); abrir(slug); verTab('hpm');
+    document.querySelector('#secciones .bloque-h input').focus();
+  };
+
+  function revisar(slug) {  // lo que haría una página incompleta
+    const e = D[slug], n = e.nombre || slug;
+    if (!e.nombre.trim()) return `La estación "${slug}" no tiene nombre.`;
+    for (const [i, s] of e.secciones.entries()) {
+      if (!s.nombre.trim()) return `${n}: la sección ${i + 1} no tiene nombre.`;
+      const p = s.pasos.find(p => !p.punto.trim());
+      if (p) return `${n}: el punto N° ${p.n || '?'} de «${s.nombre}» no tiene "Punto a revisar".`;
+    }
+    if (e.efectos.some(x => !x.efecto.trim())) return `${n}: hay un efecto de falla sin texto.`;
+    return '';
+  }
+  $('guardar').onclick = async () => {
+    const error = [...cambiadas].map(revisar).find(Boolean);
+    if (error) return aviso(error);
+    const b = $('guardar'); b.disabled = true;
+    try {
+      const r = await fetch('../api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-clave': $('clave').value },
+        body: JSON.stringify(Object.fromEntries([...cambiadas].map(s => [s, D[s]]))) });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) { $('clave').focus(); throw new Error('Clave incorrecta. Escríbala junto al botón Guardar.'); }
+      if (!r.ok) throw new Error(d.error || 'No se pudo guardar.');
+      try { sessionStorage.setItem('admin-clave', $('clave').value); } catch {}
+      cambiadas.clear(); barra(); listaEstaciones();
+      aviso(d.github ? 'Guardado. El sitio (páginas, asistente y códigos QR) se actualiza solo en unos minutos.'
+        : (d.aviso || 'Guardado en el servidor.') + ' Para publicarlo se necesitan GITHUB_TOKEN y GITHUB_REPO en Render; en local, ejecute py build.py.', d.github);
+    } catch (e) { aviso(e instanceof TypeError ? 'Sin conexión con el servidor.' : e.message); }
+    finally { b.disabled = false; }
+  };
+  $('descartar').onclick = () => { if (confirm('¿Descartar todos los cambios sin guardar?')) { cambiadas.clear(); location.reload(); } };
+  addEventListener('beforeunload', ev => { if (cambiadas.size) ev.preventDefault(); });
+  try { $('clave').value = sessionStorage.getItem('admin-clave') || ''; } catch {}
+
+  fetch('datos.json', { cache: 'no-store' }).then(r => r.json()).then(d => { D = d; listaEstaciones(); })
+    .catch(() => { $('estaciones').replaceChildren(el('li', { className: 'error-msg', textContent: 'No se pudieron cargar las estaciones.' })); });
+})();
+</script>
+{% endblock %}

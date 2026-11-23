@@ -33,7 +33,7 @@ for m in machines:
 # troubleshooting: una página por máquina con matriz; sin administrador
 from build import TS_DIR
 import openpyxl
-assert not (OUT / "admin").exists() and not (OUT / "fallas.json").exists()
+assert (OUT / "admin" / "index.html").exists() and not (OUT / "fallas.json").exists()  # admin solo por ruta (sin enlaces, ver abajo)
 hpm = json.loads((OUT / "hpm.json").read_text(encoding="utf-8"))
 for m in machines:
     assert m["efectos"], m["slug"]
@@ -53,6 +53,20 @@ for pagina in ("index.html", "qr/index.html", "kpi/index.html"):
     assert "admin" not in texto.lower() and "Seleccione la estación" not in texto and "Cada código abre" not in texto, pagina
 assert "github.io" not in (OUT / "qr" / "index.html").read_text(encoding="utf-8")
 print(f"OK troubleshooting: {sum(len(m['efectos']) for m in machines)} efectos")
+
+# ediciones de /admin/: estación nueva y troubleshooting reemplazado, encima de lo leído de los Excel
+import build as B, pathlib, tempfile
+f = pathlib.Path(tempfile.mkdtemp()) / "e.json"
+f.write_text(json.dumps({"leak-tester": {"nombre": "Leak Tester", "efectos": [{"efecto": "Fuga", "categoria": "EQUIPO", "causas": ["Sello", ""]}],
+                         "secciones": [{"nombre": "Limpieza", "pasos": [{"n": "1", "punto": "Filtro"}]}, {"nombre": "Vacía", "pasos": []}]},
+                         machines[0]["slug"]: {"nombre": "Otro nombre", "efectos": []}}), encoding="utf-8")
+B.ADMIN_JSON, copia = (f,), [dict(m, info=dict(m["info"])) for m in machines]
+B.aplicar_admin(copia)
+nueva = copia[-1]
+assert len(copia) == 5 and nueva["slug"] == "leak-tester" and nueva["total"] == 1 and len(nueva["secciones"]) == 1
+assert nueva["efectos"] == [{"efecto": "Fuga", "categoria": "EQUIPO", "causas": ["Sello"]}]
+assert copia[0]["efectos"] == [] and copia[0]["info"]["equipo"] == "Otro nombre" and copia[0]["total"] == machines[0]["total"]
+print("OK ediciones de admin")
 
 # KPIs: solo interrupción = Si, sin línea/máquina N/A ni ADMINISTRADOR DEL SISTEMA; downtime = tiempo de reparación
 js = r"""
@@ -146,6 +160,11 @@ try:
     assert pedir("/api/andon", nuevo, {"x-clave": "x1"})[0] == 200
     assert any(x["id"] == 99999999 for x in json.loads(pedir("/andon.json")[1]))
     assert any(x["id"] == 99999999 for x in json.loads((OUT.parent / datos / "andon.json").read_text(encoding="utf-8")))
+    est = {"nueva-estacion": {"nombre": "Nueva estación", "secciones": [{"nombre": "S", "pasos": [{"n": "1", "punto": "P"}]}], "efectos": []}}
+    assert pedir("/api/admin", est)[0] == 401 and pedir("/api/admin", {"../x": est["nueva-estacion"]}, {"x-clave": "x1"})[0] == 400
+    assert pedir("/api/admin", est, {"x-clave": "x1"})[0] == 200
+    assert json.loads(pedir("/admin/datos.json")[1])["nueva-estacion"]["secciones"][0]["pasos"][0]["punto"] == "P"
+    assert pedir("/admin/")[0] == 200
 finally:
     srv.kill()
     shutil.rmtree(datos, ignore_errors=True)
