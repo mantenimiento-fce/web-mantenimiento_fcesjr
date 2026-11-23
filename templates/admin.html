@@ -49,12 +49,19 @@
   .campos .ancho { grid-column: 1 / -1; }
   .causa { display: flex; gap: var(--sp-2); align-items: center; }
   .causa span { min-width: 24px; text-align: right; font-weight: 700; color: var(--c-blue); }
+  .orden { display: flex; gap: 2px; flex: none; }
+  .orden .btn { width: 36px; min-height: 36px; padding: 0; font-size: var(--fs-md); }
+  .fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--sp-2); }
+  .foto { display: grid; border: 1px solid var(--c-line); border-radius: var(--r-md); background: var(--c-surface); overflow: hidden; }
+  .foto img, .foto svg { display: block; width: 100%; height: 110px; object-fit: contain; padding: var(--sp-1); }
+  .foto .btn { min-height: 36px; border-radius: 0; border-top: 1px solid var(--c-line); }
+  .foto small { padding: var(--sp-1) var(--sp-2) 0; font-size: var(--fs-xs); color: var(--c-muted); }
+  label.btn:focus-within { box-shadow: var(--focus-ring); }
   .acciones { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: space-between; }
 
   .barra { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; background: var(--c-ink); color: var(--c-on-dark); }
   .barra .wrap { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; padding-block: var(--sp-3); }
   .barra p { flex: 1; min-width: 200px; }
-  .barra .input { width: 180px; min-height: var(--tap); }
   .btn-barra { color: var(--c-on-dark); }
   .btn-barra:hover { background: var(--c-blue-hover); }
   .msg { padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); }
@@ -68,6 +75,8 @@
     <h2 id="lista-t">Estaciones</h2>
     <ul id="estaciones"><li class="muted">Cargando…</li></ul>
     <button class="btn btn-secondary" type="button" id="nueva">+ Nueva estación</button>
+    <div class="campo-form"><label for="clave">Clave de administrador</label>
+      <input class="input" id="clave" type="password" autocomplete="current-password"></div>
   </aside>
 
   <section aria-live="polite">
@@ -83,12 +92,12 @@
         <button type="button" role="tab" id="tab-ts" aria-controls="panel-ts">Troubleshooting</button>
       </div>
       <div id="panel-hpm" role="tabpanel" aria-labelledby="tab-hpm">
-        <p class="ayuda">Cada sección agrupa puntos de mantenimiento. Toque un punto para abrirlo y editarlo. Las imágenes del Excel se muestran en el punto con el mismo N°.</p>
+        <p class="ayuda">Cada sección agrupa puntos de mantenimiento. Toque un punto para abrirlo y editarlo. Con ↑ ↓ cambia el orden; los N° se renumeran solos.</p>
         <div id="secciones" class="ficha"></div>
         <p><button class="btn btn-secondary" type="button" id="add-sec">+ Agregar sección</button></p>
       </div>
       <div id="panel-ts" role="tabpanel" aria-labelledby="tab-ts" hidden>
-        <p class="ayuda">Cada efecto es una falla que ve el técnico; debajo van sus posibles causas, en orden.</p>
+        <p class="ayuda">Cada efecto es una falla que ve el técnico; debajo van sus posibles causas, en orden. Con ↑ ↓ cambia el orden.</p>
         <div id="efectos" class="ficha"></div>
         <p><button class="btn btn-secondary" type="button" id="add-ef">+ Agregar efecto de falla</button></p>
       </div>
@@ -99,15 +108,13 @@
 
 <div class="barra" id="barra" hidden><div class="wrap">
   <p id="pendientes"></p>
-  <label class="sr-only" for="clave">Clave de administrador</label>
-  <input class="input" id="clave" type="password" placeholder="Clave" autocomplete="current-password">
   <button class="btn btn-ghost btn-barra" type="button" id="descartar">Descartar</button>
   <button class="btn btn-primary" type="button" id="guardar">{{ icono("check") }} Guardar cambios</button>
 </div></div>
 
 <script>
 (() => {
-  const CAMPOS = [['n', 'N°'], ['punto', 'Punto a revisar', 'ancho'], ['metodo', 'Método', 'ancho'], ['norma', 'Norma / criterio', 'ancho'],
+  const CAMPOS = [['punto', 'Punto a revisar', 'ancho'], ['metodo', 'Método', 'ancho'], ['norma', 'Norma / criterio', 'ancho'],
                   ['contramedida', 'Contramedida', 'ancho'], ['hta', 'Herramienta'], ['material', 'Material'],
                   ['tiempo', 'Tiempo (min)'], ['frec', 'Frecuencia (semanas)'], ['hora', 'Hora ejec.']];
   const HORAS = [['', '—'], ['ON', 'ON · equipo funcionando'], ['OFF', 'OFF · equipo parado'], ['ON/OFF', 'ON/OFF · cualquiera']];
@@ -116,7 +123,8 @@
   const $ = id => document.getElementById(id);
   const el = (tag, props = {}, ...hijos) => { const e = Object.assign(document.createElement(tag), props); e.append(...hijos); return e; };
   const slugify = s => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const boton = (texto, clase, accion) => el('button', { type: 'button', className: 'btn ' + clase, textContent: texto, onclick: accion });
+  const boton = (texto, clase, accion, etiqueta) => el('button', { type: 'button', className: 'btn ' + clase, textContent: texto,
+    ariaLabel: etiqueta || null, title: etiqueta || '', onclick: ev => { ev.preventDefault(); ev.stopPropagation(); accion(); } });
   function aviso(texto, ok) { const m = $('msg'); m.textContent = texto; m.className = 'msg ' + (ok ? 'ok' : 'mal'); m.hidden = !texto; if (texto) m.scrollIntoView({ block: 'nearest' }); }
   function campo(etiqueta, control, clase = '') {
     control.id ||= 'c' + Math.random().toString(36).slice(2);
@@ -133,6 +141,53 @@
   function barra() {
     $('barra').hidden = !cambiadas.size;
     $('pendientes').textContent = `Cambios sin guardar en: ${[...cambiadas].map(s => D[s].nombre || s).join(', ')}`;
+  }
+  // ↑ ↓ de un elemento de arr; abierto = clave del elemento a dejar abierto en su nueva posición
+  function orden(arr, i, nombre, abierto = j => null) {
+    const mover = d => { const j = i + d; [arr[i], arr[j]] = [arr[j], arr[i]]; marcar(); pintar(abierto(j)); };
+    const sube = boton('↑', 'btn-ghost', () => mover(-1), `Subir ${nombre}`), baja = boton('↓', 'btn-ghost', () => mover(1), `Bajar ${nombre}`);
+    sube.disabled = i === 0; baja.disabled = i === arr.length - 1;
+    return el('span', { className: 'orden' }, sube, baja);
+  }
+
+  // ---- fotos: se reducen aquí (máx. 1400 px, JPG) y se suben al momento; el registro solo guarda el nombre
+  async function reducir(archivo) {
+    const img = await createImageBitmap(archivo), k = Math.min(1, 1400 / Math.max(img.width, img.height));
+    const c = el('canvas', { width: Math.round(img.width * k), height: Math.round(img.height * k) });
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', .85));
+    const b = new Uint8Array(await blob.arrayBuffer());
+    let bin = ''; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  async function subir(archivos, lista, abierto) {
+    aviso('Subiendo fotos…', true);
+    try {
+      for (const a of archivos) {
+        const r = await fetch('../api/admin/foto', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-clave': $('clave').value },
+          body: JSON.stringify({ jpg: await reducir(a) }) });
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 401) { $('clave').focus(); throw new Error('Para subir fotos escriba la clave de administrador (a la izquierda).'); }
+        if (!r.ok) throw new Error(d.error || 'No se pudo subir la foto.');
+        guardarClave();
+        if (!lista.includes(d.nombre)) lista.push(d.nombre);
+        if (d.aviso) aviso(d.aviso);
+      }
+      marcar(); pintar(abierto);
+      aviso('Fotos agregadas. Recuerde guardar los cambios.', true);
+    } catch (e) { aviso(e instanceof TypeError ? 'Sin conexión con el servidor.' : e.message); }
+  }
+  function fotos(obj, abierto) {
+    const e = D[actual], quitar = (arr, i) => boton('Quitar', 'btn-danger', () => { arr.splice(i, 1); marcar(); pintar(abierto); });
+    const tarjetas = [
+      ...(obj.fig_ids || []).map((id, i) => { const f = el('div', { className: 'foto' }); f.innerHTML = e.figuras?.[id] || '';  // SVG generado por build.py
+        f.append(el('small', { textContent: 'Del Excel' }), quitar(obj.fig_ids, i)); return f; }),
+      ...obj.fotos.map((n, i) => el('div', { className: 'foto' }, el('img', { src: `../fotos/${n}`, alt: `Foto ${i + 1}`, loading: 'lazy' }), quitar(obj.fotos, i)))];
+    const entradaArchivo = el('input', { type: 'file', accept: 'image/*', multiple: true, className: 'sr-only' });
+    entradaArchivo.onchange = () => entradaArchivo.files.length && subir([...entradaArchivo.files], obj.fotos, abierto);
+    return el('div', { className: 'campo-form' }, el('p', { className: 'eyebrow', textContent: `Fotos (${tarjetas.length})` }),
+      tarjetas.length ? el('div', { className: 'fotos' }, ...tarjetas) : el('p', { className: 'muted', textContent: 'Sin fotos.' }),
+      el('p', {}, el('label', { className: 'btn btn-secondary' }, '+ Agregar fotos', entradaArchivo)));
   }
 
   function listaEstaciones() {
@@ -164,63 +219,68 @@
 
   function pintar(abrirItem) {
     const e = D[actual];
-    $('tab-hpm').textContent = `HPM (${e.secciones.reduce((n, s) => n + s.pasos.length, 0)})`;
+    let n = 0;  // N° continuo entre secciones, en el orden de la lista
+    for (const s of e.secciones) for (const p of s.pasos) p.n = String(++n);
+    $('tab-hpm').textContent = `HPM (${n})`;
     $('tab-ts').textContent = `Troubleshooting (${e.efectos.length})`;
     verTab(tab);
     // ---- HPM
     $('secciones').replaceChildren(...e.secciones.map((s, si) => {
       const pasos = s.pasos.map((p, pi) => {
-        const t = el('span', { className: 't' }), n = el('span', { className: 'paso-n' });
-        const titulo = () => { n.textContent = p.n || '?'; t.textContent = p.punto || 'Punto nuevo (sin texto)'; };
+        p.fig_ids ||= []; p.fotos ||= [];
+        const t = el('span', { className: 't' });
+        const titulo = () => { t.textContent = p.punto || 'Punto nuevo (sin texto)'; };
         titulo();
         const hora = el('select', { className: 'input' }, ...HORAS.map(([v, txt]) => el('option', { value: v, textContent: txt })));
         hora.value = HORAS.some(h => h[0] === p.hora) ? p.hora : '';
         hora.onchange = () => { p.hora = hora.value; marcar(); };
         const campos = CAMPOS.map(([k, etq, clase]) => campo(etq, k === 'hora' ? hora :
           entrada(p, k, { largo: clase === 'ancho', alCambiar: titulo }), clase));
-        const d = el('details', { className: 'item', open: abrirItem === `p${si}-${pi}` },
-          el('summary', {}, n, t),
-          el('div', { className: 'item-cuerpo' }, el('div', { className: 'campos' }, ...campos),
+        const clave = `p${si}-${pi}`;
+        return el('details', { className: 'item', open: abrirItem === clave },
+          el('summary', {}, el('span', { className: 'paso-n', textContent: p.n }), t, orden(s.pasos, pi, `punto ${p.n}`, j => `p${si}-${j}`)),
+          el('div', { className: 'item-cuerpo' }, el('div', { className: 'campos' }, ...campos), fotos(p, clave),
             el('div', { className: 'acciones' }, el('span'), boton('Eliminar punto', 'btn-danger', () => {
-              if (confirm(`¿Eliminar el punto N° ${p.n || '?'} «${p.punto || ''}»?`)) { s.pasos.splice(pi, 1); marcar(); pintar(); }
+              if (confirm(`¿Eliminar el punto N° ${p.n} «${p.punto || ''}»?`)) { s.pasos.splice(pi, 1); marcar(); pintar(); }
             }))));
-        return d;
       });
       return el('div', { className: 'panel bloque' },
-        el('div', { className: 'bloque-h' }, campo(`Sección ${si + 1}`, entrada(s, 'nombre')),
+        el('div', { className: 'bloque-h' }, campo(`Sección ${si + 1}`, entrada(s, 'nombre')), orden(e.secciones, si, `sección ${si + 1}`),
           boton('Eliminar sección', 'btn-danger', () => {
             if (confirm(`¿Eliminar la sección «${s.nombre}» y sus ${s.pasos.length} puntos?`)) { e.secciones.splice(si, 1); marcar(); pintar(); }
           })),
         ...pasos,
         el('p', {}, boton('+ Agregar punto', 'btn-secondary', () => {
-          const max = Math.max(0, ...e.secciones.flatMap(x => x.pasos.map(p => parseInt(p.n) || 0)));
-          s.pasos.push({ n: String(max + 1), punto: '', metodo: '', norma: '', contramedida: '', hta: '', material: '', tiempo: '', frec: '', hora: '' });
+          s.pasos.push({ n: '', punto: '', metodo: '', norma: '', contramedida: '', hta: '', material: '', tiempo: '', frec: '', hora: '', fig_ids: [], fotos: [] });
           marcar(); pintar(`p${si}-${s.pasos.length - 1}`); enfocar();
         })));
     }));
     // ---- troubleshooting
     $('efectos').replaceChildren(...e.efectos.map((x, xi) => {
+      x.fotos ||= [];
       const t = el('span', { className: 't' });
-      const titulo = () => { t.replaceChildren(x.efecto || 'Efecto nuevo (sin texto)', el('small', { textContent: `${x.categoria || 'Sin categoría'} · ${x.causas.length} causas` })); };
+      const titulo = () => { t.replaceChildren(x.efecto || 'Efecto nuevo (sin texto)', el('small', { textContent: `${x.categoria || 'Sin categoría'} · ${x.causas.length} causas · ${x.fotos.length} fotos` })); };
       titulo();
       const cat = entrada(x, 'categoria', { alCambiar: titulo }); cat.setAttribute('list', 'categorias');
       const causas = x.causas.map((c, ci) => {
         const i = el('input', { className: 'input', value: c, ariaLabel: `Causa ${ci + 1}` });
         i.oninput = () => { x.causas[ci] = i.value; marcar(); };
-        return el('div', { className: 'causa' }, el('span', { textContent: ci + 1 }), i,
+        return el('div', { className: 'causa' }, el('span', { textContent: ci + 1 }), i, orden(x.causas, ci, `causa ${ci + 1}`, () => `e${xi}`),
           boton('Quitar', 'btn-danger', () => { x.causas.splice(ci, 1); marcar(); pintar(`e${xi}`); }));
       });
       return el('details', { className: 'item', open: abrirItem === `e${xi}` },
-        el('summary', {}, el('span', { className: 'paso-n', textContent: xi + 1 }), t),
+        el('summary', {}, el('span', { className: 'paso-n', textContent: xi + 1 }), t, orden(e.efectos, xi, `efecto ${xi + 1}`, j => `e${j}`)),
         el('div', { className: 'item-cuerpo' },
           el('div', { className: 'campos' }, campo('Efecto (lo que ve el técnico)', entrada(x, 'efecto', { largo: true, alCambiar: titulo }), 'ancho'),
             campo('Categoría (EQUIPO, PROCESO, MATERIAL…)', cat)),
           el('p', { className: 'eyebrow', textContent: 'Posibles causas' }), ...causas,
-          el('div', { className: 'acciones' },
-            boton('+ Agregar causa', 'btn-secondary', () => { x.causas.push(''); marcar(); pintar(`e${xi}`); [...document.querySelectorAll('#efectos details[open] .causa input')].pop()?.focus(); }),
-            boton('Eliminar efecto', 'btn-danger', () => {
-              if (confirm(`¿Eliminar el efecto «${x.efecto}»?`)) { e.efectos.splice(xi, 1); marcar(); pintar(); }
-            }))));
+          el('p', {}, boton('+ Agregar causa', 'btn-secondary', () => {
+            x.causas.push(''); marcar(); pintar(`e${xi}`); [...document.querySelectorAll('#efectos details[open] .causa input')].pop()?.focus();
+          })),
+          fotos(x, `e${xi}`),
+          el('div', { className: 'acciones' }, el('span'), boton('Eliminar efecto', 'btn-danger', () => {
+            if (confirm(`¿Eliminar el efecto «${x.efecto}»?`)) { e.efectos.splice(xi, 1); marcar(); pintar(); }
+          }))));
     }));
   }
   const enfocar = (sel = 'textarea, input') => document.querySelector(`#panel-${tab} details[open] ${sel}`)?.focus();
@@ -232,7 +292,7 @@
     [...document.querySelectorAll('#secciones .bloque-h input')].pop().focus();
   };
   $('add-ef').onclick = () => {
-    const e = D[actual]; e.efectos.push({ efecto: '', categoria: e.efectos.at(-1)?.categoria || 'EQUIPO', causas: [''] });
+    const e = D[actual]; e.efectos.push({ efecto: '', categoria: e.efectos.at(-1)?.categoria || 'EQUIPO', causas: [''], fotos: [] });
     marcar(); pintar(`e${e.efectos.length - 1}`); enfocar();
   };
   $('nueva').onclick = () => {
@@ -241,7 +301,7 @@
     const slug = slugify(nombre);
     if (!slug) return alert('Escriba un nombre con letras o números.');
     if (D[slug]) return alert(`Ya existe una estación con ese nombre (${D[slug].nombre}).`);
-    D[slug] = { nombre, secciones: [{ nombre: '', pasos: [] }], efectos: [] };
+    D[slug] = { nombre, figuras: {}, secciones: [{ nombre: '', pasos: [] }], efectos: [] };
     actual = slug; marcar(); abrir(slug); verTab('hpm');
     document.querySelector('#secciones .bloque-h input').focus();
   };
@@ -252,22 +312,23 @@
     for (const [i, s] of e.secciones.entries()) {
       if (!s.nombre.trim()) return `${n}: la sección ${i + 1} no tiene nombre.`;
       const p = s.pasos.find(p => !p.punto.trim());
-      if (p) return `${n}: el punto N° ${p.n || '?'} de «${s.nombre}» no tiene "Punto a revisar".`;
+      if (p) return `${n}: el punto N° ${p.n} de «${s.nombre}» no tiene "Punto a revisar".`;
     }
     if (e.efectos.some(x => !x.efecto.trim())) return `${n}: hay un efecto de falla sin texto.`;
     return '';
   }
+  const guardarClave = () => { try { sessionStorage.setItem('admin-clave', $('clave').value); } catch {} };
   $('guardar').onclick = async () => {
     const error = [...cambiadas].map(revisar).find(Boolean);
     if (error) return aviso(error);
     const b = $('guardar'); b.disabled = true;
     try {
       const r = await fetch('../api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-clave': $('clave').value },
-        body: JSON.stringify(Object.fromEntries([...cambiadas].map(s => [s, D[s]]))) });
+        body: JSON.stringify(Object.fromEntries([...cambiadas].map(s => [s, { ...D[s], figuras: undefined }]))) });
       const d = await r.json().catch(() => ({}));
-      if (r.status === 401) { $('clave').focus(); throw new Error('Clave incorrecta. Escríbala junto al botón Guardar.'); }
+      if (r.status === 401) { $('clave').focus(); throw new Error('Clave incorrecta. Escríbala en "Clave de administrador", a la izquierda.'); }
       if (!r.ok) throw new Error(d.error || 'No se pudo guardar.');
-      try { sessionStorage.setItem('admin-clave', $('clave').value); } catch {}
+      guardarClave();
       cambiadas.clear(); barra(); listaEstaciones();
       aviso(d.github ? 'Guardado. El sitio (páginas, asistente y códigos QR) se actualiza solo en unos minutos.'
         : (d.aviso || 'Guardado en el servidor.') + ' Para publicarlo se necesitan GITHUB_TOKEN y GITHUB_REPO en Render; en local, ejecute py build.py.', d.github);

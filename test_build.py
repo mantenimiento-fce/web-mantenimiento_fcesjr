@@ -64,8 +64,23 @@ B.ADMIN_JSON, copia = (f,), [dict(m, info=dict(m["info"])) for m in machines]
 B.aplicar_admin(copia)
 nueva = copia[-1]
 assert len(copia) == 5 and nueva["slug"] == "leak-tester" and nueva["total"] == 1 and len(nueva["secciones"]) == 1
-assert nueva["efectos"] == [{"efecto": "Fuga", "categoria": "EQUIPO", "causas": ["Sello"]}]
+assert nueva["efectos"] == [{"efecto": "Fuga", "categoria": "EQUIPO", "causas": ["Sello"], "fotos": [], "figs": []}]
 assert copia[0]["efectos"] == [] and copia[0]["info"]["equipo"] == "Otro nombre" and copia[0]["total"] == machines[0]["total"]
+# orden y fotos: un paso con imágenes pasa primero con solo una imagen del Excel y una foto subida; el efecto lleva su foto
+from PIL import Image
+Image.new("RGB", (40, 20), "red").save(B.FOTOS / "0123456789abcdef.jpg")
+m0 = machines[0]; todos = [p for s in m0["secciones"] for p in s["pasos"]]
+p2 = next(p for p in todos if p["figs"]); p1 = next(p for p in todos if p is not p2)
+fig = next(f for f in m0["figuras"] if f["svg"] in p2["figs"])
+f.write_text(json.dumps({m0["slug"]: {"nombre": "X", "efectos": [{"efecto": "E", "fotos": ["0123456789abcdef.jpg", "ffffffffffffffff.jpg"]}],
+    "secciones": [{"nombre": "S", "pasos": [{**p2, "n": "1", "fig_ids": [B.fig_id(fig["svg"])], "fotos": ["0123456789abcdef.jpg"]},
+                                            {**p1, "n": "2", "fig_ids": []}]}]}}), encoding="utf-8")
+copia = [dict(m, info=dict(m["info"])) for m in machines]
+B.aplicar_admin(copia)
+q1, q2 = copia[0]["secciones"][0]["pasos"]
+assert q1["punto"] == p2["punto"] and q1["n"] == "1" and q2["figs"] == []
+assert q1["figs"][0] == fig["svg"] and 'href="../../fotos/0123456789abcdef.jpg" width="40" height="20"' in q1["figs"][1]
+assert copia[0]["efectos"][0]["figs"] == ["0123456789abcdef.jpg"]  # la que no existe se omite
 print("OK ediciones de admin")
 
 # KPIs: solo interrupción = Si, sin línea/máquina N/A ni ADMINISTRADOR DEL SISTEMA; downtime = tiempo de reparación
@@ -131,7 +146,7 @@ for (estacion, pregunta, esperado), r in zip(CASOS, json.loads(salida)):
 assert not fallas, fallas
 print(f"OK consulta: {len(CASOS)} preguntas")
 # servidor (server.js): sitio, andon.json, chat sin API key (buscador local), publicar con clave, sin salir de _site
-import shutil, tempfile, time, urllib.request, urllib.error
+import base64, shutil, tempfile, time, urllib.request, urllib.error
 datos = tempfile.mkdtemp()
 env = {**os.environ, "PORT": "10987", "DATA_DIR": datos, "ANDON_CLAVE": "x1", "ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": "", "GEMINI_API_KEY": "", "GROQ_API_KEY": ""}
 srv = subprocess.Popen(["node", "server.js"], cwd=BASE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -165,6 +180,14 @@ try:
     assert pedir("/api/admin", est, {"x-clave": "x1"})[0] == 200
     assert json.loads(pedir("/admin/datos.json")[1])["nueva-estacion"]["secciones"][0]["pasos"][0]["punto"] == "P"
     assert pedir("/admin/")[0] == 200
+    assert pedir("/api/admin/foto", {"jpg": "aGk="}, {"x-clave": "x1"})[0] == 400
+    jpg = base64.b64encode(bytes([255, 216, 255]) + b"0" * 200).decode()
+    assert pedir("/api/admin/foto", {"jpg": jpg})[0] == 401
+    st, b = pedir("/api/admin/foto", {"jpg": jpg}, {"x-clave": "x1"}); nombre = json.loads(b)["nombre"]
+    assert st == 200 and pedir("/fotos/" + nombre)[0] == 200 and pedir("/fotos/../server.js")[0] == 404
+    est["nueva-estacion"]["efectos"] = [{"efecto": "E", "fotos": [nombre, "../x.jpg"]}]
+    assert pedir("/api/admin", est, {"x-clave": "x1"})[0] == 200
+    assert json.loads(pedir("/admin/datos.json")[1])["nueva-estacion"]["efectos"][0]["fotos"] == [nombre]
 finally:
     srv.kill()
     shutil.rmtree(datos, ignore_errors=True)

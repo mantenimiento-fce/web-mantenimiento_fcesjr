@@ -116,12 +116,15 @@ servidor (requiere Node). GitHub Actions lo corre en cada push (`.github/workflo
 Copiar el Excel (mismo formato HPM) a `HPM/` y hacer push. El nombre de la ruta sale de la celda EQUIPO (K6).
 
 **Administrador (`/admin/`)**: se abre escribiendo la ruta (ninguna página la enlaza). Permite crear estaciones y, en cada
-una, agregar, editar o eliminar secciones y puntos del HPM, y efectos y causas del troubleshooting. *Guardar cambios* pide
+una, agregar, editar, eliminar o reordenar (↑ ↓) secciones y puntos del HPM, y efectos y causas del troubleshooting; los N°
+del HPM se renumeran solos. Cada punto y cada efecto puede llevar fotos: se agregan desde el celular o la PC (se reducen
+a 1400 px antes de subirse a `fotos_admin/` del repositorio, en un commit que no dispara deploy) y se quitan con *Quitar*,
+incluidas las imágenes que venían del Excel. *Guardar cambios* pide
 `ADMIN_CLAVE` (o `ANDON_CLAVE` si no existe) y guarda en `estaciones_admin.json` del repositorio (requiere `GITHUB_TOKEN` +
 `GITHUB_REPO`); ese commit hace que Render reconstruya el sitio, así que las páginas, el asistente y los **códigos QR** de
 estaciones nuevas aparecen solos en unos minutos. `build.py` aplica ese archivo encima de los Excel: una estación editada
-en el admin ya no toma del Excel la parte editada (HPM o troubleshooting); las imágenes del Excel siguen saliendo por N° de
-punto. Al renombrar una estación su ruta (y su QR) no cambia. En local lo guardado queda en `data/estaciones_admin.json`
+en el admin ya no toma del Excel la parte editada (HPM o troubleshooting); cada punto guarda qué imágenes del Excel
+conserva. Al renombrar una estación su ruta (y su QR) no cambia. En local lo guardado queda en `data/estaciones_admin.json` y `data/fotos_admin/`
 y se ve al correr `py build.py`.
 
 En `/qr/` se marcan los códigos a imprimir (*Todos* / *Ninguno*); solo se imprimen los marcados.

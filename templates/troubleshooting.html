@@ -30,6 +30,10 @@
   .causas li { counter-increment: causa; display: grid; grid-template-columns: 28px 1fr; gap: var(--sp-3); align-items: baseline;
                padding: var(--sp-2) 0; border-bottom: 1px dashed var(--c-line); max-width: var(--measure); }
   .causas li:last-child { border-bottom: 0; }
+  .ts-fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--sp-2); padding: 0 var(--sp-4) var(--sp-4); }
+  .ts-fotos a { display: block; border: 1px solid var(--c-line); border-radius: var(--r-md); overflow: hidden; }
+  .ts-fotos a:hover { border-color: var(--c-blue); }
+  .ts-fotos img { display: block; width: 100%; height: 160px; object-fit: cover; }
   .causas li::before { content: counter(causa); font: 700 var(--fs-md)/1 var(--font-display); color: var(--c-blue); text-align: right; }
 </style>
 {% endblock %}
@@ -54,6 +58,7 @@
       {% else %}
       <p class="causas muted">Aún no hay causas registradas para este efecto.</p>
       {% endif %}
+      {% if e.figs %}<div class="ts-fotos">{% for f in e.figs %}<a href="../../../fotos/{{ f }}" target="_blank" rel="noopener" aria-label="Ver foto {{ loop.index }} en grande"><img src="../../../fotos/{{ f }}" alt="Foto {{ loop.index }}: {{ e.efecto }}" loading="lazy"></a>{% endfor %}</div>{% endif %}
     </details>
     {% endfor %}
   </section>

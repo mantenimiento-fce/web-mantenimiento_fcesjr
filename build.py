@@ -58,6 +58,7 @@ LINEAS_ANDON = {
     "Stellantis": ["Stellantis ECU", "Stellantis Display", "Stellantis RVC"], "Rivian": ["Rivian Display", "Rivian Remoute"],
 }
 ADMIN_JSON = (BASE / "estaciones_admin.json", BASE / "data" / "estaciones_admin.json")  # lo que se edita en /admin/
+FOTOS_ADMIN = (BASE / "fotos_admin", BASE / "data" / "fotos_admin")  # fotos subidas en /admin/ (repositorio y local)
 EMU = 12700  # EMU por punto: el SVG se dibuja en puntos (los navegadores no pintan letras de 139700 px)
 
 
@@ -361,12 +362,38 @@ def load_machine(path):
     return m
 
 
+def fig_id(svg):
+    return hashlib.sha1(svg.encode()).hexdigest()[:10]
+
+
+def foto_svg(nombre, raiz):
+    """Foto subida en /admin/ como figura SVG (así se amplía igual que las del Excel); None si el archivo no está."""
+    f = FOTOS / nombre
+    if not re.fullmatch(r"[0-9a-f]{16}\.jpg", nombre) or not f.exists():
+        return None
+    with Image.open(f) as img:
+        w, h = img.size
+    return (f'<svg class="fig" viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" role="img">'
+            f'<image href="{raiz}fotos/{nombre}" width="{w}" height="{h}"/></svg>')
+
+
 def asignar_figuras(m):
-    """Cada paso muestra las imágenes cuyas llamadas lo mencionan (ej. "13 ~ 17" -> pasos 13 a 17)."""
+    """Cada paso muestra las imágenes cuyas llamadas lo mencionan (ej. "13 ~ 17" -> pasos 13 a 17), o las que se eligieron en
+    /admin/ (fig_ids) más las fotos subidas ahí; cada efecto de troubleshooting, sus fotos subidas."""
     m["secciones"] = [s for s in m["secciones"] if s["pasos"]]
+    por_id = {fig_id(f["svg"]): f["svg"] for f in m["figuras"]}
     for s in m["secciones"]:
         for p in s["pasos"]:
-            p["figs"] = list(dict.fromkeys(f["svg"] for f in m["figuras"] if p["n"].isdigit() and int(p["n"]) in f["nums"]))
+            if "fig_ids" in p:
+                figs = [por_id[i] for i in p["fig_ids"] if i in por_id]
+            else:
+                figs = [f["svg"] for f in m["figuras"] if p["n"].isdigit() and int(p["n"]) in f["nums"]]
+                p["fig_ids"] = [fig_id(f) for f in dict.fromkeys(figs)]
+            p.setdefault("fotos", [])
+            p["figs"] = list(dict.fromkeys(figs + [x for x in (foto_svg(n, "../../") for n in p["fotos"]) if x]))
+    for e in m.get("efectos", []):
+        e.setdefault("fotos", [])
+        e["figs"] = [n for n in e["fotos"] if foto_svg(n, "")]  # solo las que existen
     m["total"] = sum(len(s["pasos"]) for s in m["secciones"])
 
 
@@ -386,11 +413,13 @@ def aplicar_admin(machines):
         m["info"]["equipo"] = txt(e.get("nombre")) or m["info"]["equipo"] or slug
         if "secciones" in e:
             m["secciones"] = [{"nombre": txt(s.get("nombre")), "id": f"s{i}",
-                               "pasos": [{k: txt(p.get(k)) for k, _ in COLS} for p in s.get("pasos", [])]}
+                               "pasos": [{**{k: txt(p.get(k)) for k, _ in COLS}, "fig_ids": p.get("fig_ids", []),
+                                          "fotos": p.get("fotos", [])} for p in s.get("pasos", [])]}
                               for i, s in enumerate(e["secciones"], 1)]
         if "efectos" in e:
             m["efectos"] = [{"efecto": txt(x.get("efecto")), "categoria": txt(x.get("categoria")),
-                             "causas": [txt(c) for c in x.get("causas", []) if txt(c)]} for x in e["efectos"] if txt(x.get("efecto"))]
+                             "causas": [txt(c) for c in x.get("causas", []) if txt(c)], "fotos": x.get("fotos", [])}
+                            for x in e["efectos"] if txt(x.get("efecto"))]
             orden = list(dict.fromkeys(x["categoria"] for x in m["efectos"]))
             m["efectos"].sort(key=lambda x: orden.index(x["categoria"]))
         asignar_figuras(m)
@@ -482,10 +511,15 @@ def build():
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(text, encoding="utf-8")
 
+    for d in FOTOS_ADMIN:
+        for f in d.glob("*.jpg") if d.exists() else []:
+            shutil.copy(f, FOTOS / f.name)
     efectos = load_troubleshooting()
     for m in machines:
         m["efectos"] = efectos.get(m["slug"], [])
     aplicar_admin(machines)
+    for m in machines:
+        asignar_figuras(m)  # fotos subidas también en troubleshooting de estaciones que no pasaron por el admin
 
     write("index.html", env.get_template("index.html").render(machines=machines))
     for m in machines:
@@ -498,8 +532,11 @@ def build():
     write("qr/index.html", env.get_template("qr.html").render(machines=machines, base_url=base_url))
     # /admin/: solo por ruta (ningún enlace la menciona); edita estaciones, HPM y troubleshooting
     write("admin/index.html", env.get_template("admin.html").render())
-    write("admin/datos.json", json.dumps({m["slug"]: {"nombre": m["info"]["equipo"], "efectos": m["efectos"], "secciones": [
-        {"nombre": s["nombre"], "pasos": [{k: p[k] for k, _ in COLS} for p in s["pasos"]]} for s in m["secciones"]]}
+    write("admin/datos.json", json.dumps({m["slug"]: {
+        "nombre": m["info"]["equipo"], "figuras": {fig_id(f["svg"]): f["svg"] for f in m["figuras"]},  # solo para verlas
+        "efectos": [{k: e[k] for k in ("efecto", "categoria", "causas", "fotos")} for e in m["efectos"]],
+        "secciones": [{"nombre": s["nombre"], "pasos": [{**{k: p[k] for k, _ in COLS}, "fig_ids": p["fig_ids"], "fotos": p["fotos"]}
+                                                       for p in s["pasos"]]} for s in m["secciones"]]}
         for m in machines}, ensure_ascii=False))
     lineas = load_lineas()
     write("lineas.json", json.dumps(lineas, ensure_ascii=False))
@@ -509,9 +546,10 @@ def build():
         shutil.copy(BASE / "templates" / js, OUT / js)
     shutil.copy(BASE / "templates" / "logo.png", OUT / "logo.png")  # cabecera y favicon
     # datos de la consulta por estación (HPM y troubleshooting): un solo archivo para buscar en una o en todas
-    pasos = [{"e": m["slug"], "sec": s["nombre"], **{k: v for k, v in p.items() if k != "figs"}}
+    pasos = [{"e": m["slug"], "sec": s["nombre"], **{k: p[k] for k, _ in COLS}}
              for m in machines for s in m["secciones"] for p in s["pasos"]]
-    fallas = [{"e": m["slug"], "n": i, **e} for m in machines for i, e in enumerate(m["efectos"], 1)]
+    fallas = [{"e": m["slug"], "n": i, **{k: e[k] for k in ("efecto", "categoria", "causas")}}
+              for m in machines for i, e in enumerate(m["efectos"], 1)]
     write("hpm.json", json.dumps({"leyenda": next((m["leyenda"] for m in machines if m["leyenda"]), ""),
                                   "estaciones": [{"slug": m["slug"], "nombre": m["info"]["equipo"]} for m in machines],
                                   "pasos": pasos, "fallas": fallas}, ensure_ascii=False))

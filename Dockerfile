@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY build.py estaciones_admin.json ./
 COPY templates templates
 COPY HPM HPM
+COPY fotos_admin fotos_admin
 COPY troubleshooting troubleshooting
 COPY ["Maintenance 2026", "Maintenance 2026"]
 # Render pasa las variables de entorno del servicio como build args: la URL pública va dentro de los QR

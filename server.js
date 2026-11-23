@@ -140,13 +140,42 @@ const CAMPOS_PASO = ['n', 'punto', 'metodo', 'norma', 'contramedida', 'hta', 'ma
 const leerAdmin = () => { try { return JSON.parse(fs.readFileSync(ADMIN_GUARDADO, 'utf8')); } catch { return {}; } };
 const texto = (v, max = 2000) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 const arreglo = v => Array.isArray(v) ? v : [];
+const ids = (v, re) => arreglo(v).filter(x => typeof x === 'string' && re.test(x)).slice(0, 50);
+const FIG = /^[0-9a-f]{10}$/, FOTO = /^[0-9a-f]{16}\.jpg$/;  // imagen del Excel (build.py fig_id) / foto subida
+const FOTOS_ADMIN = path.join(DATA_DIR, 'fotos_admin');
 function limpiarEstacion(e) {  // solo los campos que usa build.py, todo como texto
   if (!e || typeof e !== 'object' || !texto(e.nombre, 120)) return null;
   return { nombre: texto(e.nombre, 120),
     secciones: arreglo(e.secciones).map(s => ({ nombre: texto(s?.nombre, 300),
-      pasos: arreglo(s?.pasos).map(p => Object.fromEntries(CAMPOS_PASO.map(k => [k, texto(p?.[k])]))) })),
+      pasos: arreglo(s?.pasos).map(p => ({ ...Object.fromEntries(CAMPOS_PASO.map(k => [k, texto(p?.[k])])),
+        fig_ids: ids(p?.fig_ids, FIG), fotos: ids(p?.fotos, FOTO) })) })),
     efectos: arreglo(e.efectos).map(x => ({ efecto: texto(x?.efecto, 500), categoria: texto(x?.categoria, 100),
-      causas: arreglo(x?.causas).map(c => texto(c, 500)).filter(Boolean) })).filter(x => x.efecto) };
+      causas: arreglo(x?.causas).map(c => texto(c, 500)).filter(Boolean), fotos: ids(x?.fotos, FOTO) })).filter(x => x.efecto) };
+}
+
+// foto ya reducida en el navegador (JPG): se guarda en DATA_DIR y en fotos_admin/ del repositorio sin disparar un deploy;
+// el commit de "Guardar cambios" es el que reconstruye el sitio con ella
+async function subirFoto(req, res) {
+  const clave = process.env.ADMIN_CLAVE || process.env.ANDON_CLAVE;
+  if (clave && !igual(req.headers['x-clave'], clave)) return json(req, res, 401, { error: 'Clave incorrecta.' });
+  const { jpg } = await cuerpoJson(req, 6e6) || {};
+  const datos = typeof jpg === 'string' ? Buffer.from(jpg, 'base64') : Buffer.alloc(0);
+  if (datos.length < 100 || datos[0] !== 0xff || datos[1] !== 0xd8 || datos[2] !== 0xff) return json(req, res, 400, { error: 'La foto no es un JPG válido.' });
+  const nombre = crypto.createHash('sha1').update(datos).digest('hex').slice(0, 16) + '.jpg';
+  fs.mkdirSync(FOTOS_ADMIN, { recursive: true });
+  fs.writeFileSync(path.join(FOTOS_ADMIN, nombre), datos);
+  const { GITHUB_TOKEN: token, GITHUB_REPO: repo } = process.env;
+  let aviso = null;
+  if (token && repo) try {
+    const url = `https://api.github.com/repos/${repo}/contents/fotos_admin/${nombre}`;
+    const h = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'mantenimiento-web' };
+    if ((await fetch(url + '?ref=main', { headers: h })).status === 404) {  // mismo nombre = misma foto: ya está
+      const r = await fetch(url, { method: 'PUT', headers: h, body: JSON.stringify({
+        message: `Admin: foto ${nombre} [skip render] [skip ci]`, content: datos.toString('base64'), branch: 'main' }) });
+      if (!r.ok && r.status !== 422) throw new Error(`GitHub ${r.status}`);
+    }
+  } catch (e) { aviso = `Foto guardada en el servidor, pero no en GitHub (${e.message}).`; }
+  json(req, res, 200, { ok: true, nombre, aviso });
 }
 
 async function guardarAdminEnGithub(cambios) {
@@ -494,11 +523,18 @@ const servidor = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/api/chat') return await chat(req, res);
     if (req.method === 'POST' && url === '/api/andon') return await publicar(req, res);
     if (req.method === 'POST' && url === '/api/admin') return await guardarAdmin(req, res);
+    if (req.method === 'POST' && url === '/api/admin/foto') return await subirFoto(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(req, res, 405, { error: 'Método no permitido' });
     if (url === '/salud') return json(req, res, 200, { ok: true, reportes: D.registros.length, ia: iaActiva() });
     if (url === '/andon.json') return enviar(req, res, 200, 'application/json', Buffer.from(JSON.stringify(D.registros)), D.json, { 'Cache-Control': 'no-cache' });
     // lo guardado desde /admin/ antes de que el sitio se reconstruya también se ve al volver a abrir el editor
-    if (url === '/admin/datos.json') return json(req, res, 200, { ...JSON.parse(archivo(url).cuerpo), ...leerAdmin() });
+    if (url === '/admin/datos.json') {
+      const d = JSON.parse(archivo(url).cuerpo);
+      for (const [slug, e] of Object.entries(leerAdmin())) d[slug] = { ...d[slug], ...e };  // conserva las figuras del Excel para verlas
+      return json(req, res, 200, d);
+    }
+    const subida = url.startsWith('/fotos/') && FOTO.test(url.slice(7)) && path.join(FOTOS_ADMIN, url.slice(7));
+    if (subida && !archivo(url) && fs.existsSync(subida)) return enviar(req, res, 200, 'image/jpeg', fs.readFileSync(subida), null, { 'Cache-Control': 'public, max-age=31536000, immutable' });
     const a = archivo(url);
     if (!a && !path.extname(url)) {  // /estacion/x sin diagonal final -> /estacion/x/
       if (archivo(url + '/')) { res.writeHead(301, { Location: url + '/' }); return res.end(); }
